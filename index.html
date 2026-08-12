@@ -26,7 +26,15 @@
       --safe-b: env(safe-area-inset-bottom, 0px);
       --safe-t: env(safe-area-inset-top, 0px);
       --touch-min: 64px;
+      --space-1: 8px;
+      --space-2: 12px;
+      --space-3: 16px;
+      --space-4: 24px;
+      --space-5: 32px;
+      --radius: 14px;
+      --radius-lg: 18px;
       --ease: cubic-bezier(0.16, 1, 0.3, 1);
+      --duration: 180ms;
     }
 
     *, *::before, *::after { box-sizing: border-box; }
@@ -57,14 +65,20 @@
       cursor: pointer;
       border: none;
       min-height: var(--touch-min);
-      border-radius: 12px;
+      border-radius: var(--radius);
       font-weight: 800;
       letter-spacing: 0.01em;
+      transition:
+        background-color var(--duration) var(--ease),
+        border-color var(--duration) var(--ease),
+        box-shadow var(--duration) var(--ease),
+        transform var(--duration) var(--ease),
+        opacity var(--duration) var(--ease);
     }
 
     button:focus-visible,
     input:focus-visible {
-      outline: 4px solid #111;
+      outline: 4px solid var(--ink);
       outline-offset: 3px;
     }
 
@@ -77,113 +91,310 @@
         radial-gradient(120% 80% at 0% 0%, rgba(232, 93, 4, 0.18), transparent 55%),
         radial-gradient(100% 70% at 100% 100%, rgba(0, 119, 182, 0.16), transparent 50%),
         var(--paper);
-      padding: calc(16px + var(--safe-t)) 20px calc(20px + var(--safe-b));
-      overflow: auto;
-      align-items: center;
+      padding: calc(var(--space-3) + var(--safe-t)) var(--space-3) 0;
+      overflow: hidden;
+      align-items: stretch;
     }
 
     .setup-inner {
       width: min(720px, 100%);
-      margin: auto;
+      margin: 0 auto;
+      flex: 1;
+      min-height: 0;
       display: flex;
       flex-direction: column;
-      gap: 22px;
+      overflow: auto;
+      -webkit-overflow-scrolling: touch;
+      gap: var(--space-4);
+      padding-bottom: calc(var(--space-3) + var(--safe-b));
+    }
+
+    .setup-scroll {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-4);
+    }
+
+    .setup-footer {
+      position: sticky;
+      bottom: 0;
+      flex-shrink: 0;
+      padding-top: var(--space-2);
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      background:
+        linear-gradient(to top, var(--paper) 55%, rgba(247, 247, 245, 0));
     }
 
     .brand {
       text-align: center;
+      padding-top: var(--space-2);
     }
 
     .brand h1 {
       margin: 0;
-      font-size: clamp(2rem, 7vw, 3.25rem);
+      font-size: 2.75rem;
       line-height: 1.05;
       letter-spacing: -0.02em;
       text-wrap: balance;
+      overflow-wrap: anywhere;
     }
 
     .brand p {
-      margin: 8px 0 0;
-      font-size: 1.15rem;
-      font-weight: 700;
+      margin: var(--space-1) auto 0;
+      max-width: 36ch;
+      font-size: 1.125rem;
+      font-weight: 600;
+      line-height: 1.35;
       color: var(--muted);
-      min-height: 24px;
+      text-wrap: pretty;
     }
 
     .player-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 14px;
+      gap: var(--space-2);
+      position: relative;
     }
 
-    @media (max-width: 560px) {
-      .player-row { grid-template-columns: 1fr; }
+    .player-row::after {
+      content: "vs";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 1;
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      background: var(--ink);
+      color: #fff;
+      font-size: 0.85rem;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      pointer-events: none;
     }
 
     .player-card {
-      padding: 16px;
-      border-radius: 16px;
+      padding: var(--space-3);
+      border-radius: var(--radius-lg);
       color: #fff;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: var(--space-2);
+      box-shadow: 0 2px 0 rgba(0, 0, 0, 0.18);
     }
 
     .player-card.p1 { background: var(--orange); }
     .player-card.p2 { background: var(--blue); }
 
+    .player-card-head {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
     .player-card label {
       font-size: 1.25rem;
       font-weight: 800;
+      line-height: 1.2;
     }
 
     .color-tag {
-      font-size: 1rem;
-      font-weight: 800;
-      opacity: 0.95;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: rgba(255, 255, 255, 0.92);
+      letter-spacing: 0.02em;
     }
 
     .player-card input {
       width: 100%;
       min-height: var(--touch-min);
-      padding: 12px 14px;
-      border: 4px solid rgba(0,0,0,0.25);
-      border-radius: 12px;
+      padding: var(--space-2) 14px;
+      border: 3px solid rgba(0, 0, 0, 0.22);
+      border-radius: var(--radius);
       font-size: 1.5rem;
       font-weight: 800;
       color: var(--ink);
       background: #fff;
+      transition: border-color var(--duration) var(--ease), box-shadow var(--duration) var(--ease);
+    }
+
+    .player-card input:hover {
+      border-color: rgba(0, 0, 0, 0.4);
+    }
+
+    .player-card input:focus {
+      border-color: var(--ink);
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.55);
+    }
+
+    .setup-block {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
     }
 
     .section-label {
       margin: 0;
-      font-size: 1.35rem;
+      font-size: 1.25rem;
       font-weight: 800;
       text-align: center;
+      line-height: 1.25;
     }
 
     .serve-pick {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 12px;
+      gap: var(--space-2);
     }
 
     .serve-btn {
+      position: relative;
       min-height: 88px;
-      font-size: 1.35rem;
+      padding: var(--space-2) 44px var(--space-2) var(--space-3);
+      font-size: 1.25rem;
+      line-height: 1.2;
       color: #fff;
-      border: 5px solid transparent;
-      box-shadow: 0 4px 0 rgba(0,0,0,0.2);
+      border: 4px solid transparent;
+      box-shadow: 0 4px 0 rgba(0, 0, 0, 0.22);
+      text-wrap: balance;
+      overflow-wrap: anywhere;
     }
 
     .serve-btn.p1 { background: var(--orange); }
     .serve-btn.p2 { background: var(--blue); }
+
+    .serve-btn:hover {
+      filter: brightness(1.05);
+    }
+
+    .serve-btn:active:not(.selected) {
+      transform: translateY(2px);
+      box-shadow: 0 2px 0 rgba(0, 0, 0, 0.22);
+    }
+
     .serve-btn.selected {
       border-color: var(--ink);
       transform: translateY(2px);
       box-shadow: none;
+    }
+
+    .serve-btn.selected::after {
+      content: "";
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      background: var(--ink);
+      box-shadow: inset 0 0 0 2px #fff;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.5l3 3 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: center;
+      background-size: 14px 14px;
+    }
+
+    .serve-btn:focus-visible {
+      outline-color: #fff;
+      box-shadow: 0 0 0 4px var(--ink);
+    }
+
+    .session-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+
+    .session-list.hidden { display: none; }
+
+    .session-list-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-2);
+    }
+
+    .session-list-header .section-label {
+      text-align: left;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .clear-sessions-btn {
+      min-height: 48px;
+      padding: 0 14px;
+      font-size: 1rem;
+      font-weight: 700;
+      background: transparent;
+      color: var(--muted);
+      border: 2px solid rgba(0, 0, 0, 0.2);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .clear-sessions-btn:hover {
+      color: var(--ink);
+      border-color: var(--ink);
+      background: rgba(0, 0, 0, 0.04);
+    }
+
+    .clear-sessions-btn:active {
+      transform: translateY(1px);
+    }
+
+    .session-card {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: var(--space-2);
+      align-items: center;
+      background: rgba(0, 0, 0, 0.06);
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      border-radius: var(--radius-lg);
+      padding: 14px var(--space-3);
+    }
+
+    .session-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .session-names {
+      font-size: 1.15rem;
+      font-weight: 800;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .session-score {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .session-card button {
+      min-height: var(--touch-min);
+      padding: 0 18px;
+      font-size: 1.1rem;
+      background: var(--ink);
+      color: #fff;
+      white-space: nowrap;
+    }
+
+    .session-card button:hover {
+      background: #2a2a2a;
+    }
+
+    .session-card button:active {
+      transform: translateY(1px);
     }
 
     #startBtn {
@@ -195,7 +406,32 @@
       box-shadow: 0 6px 0 #000;
     }
 
-    #startBtn:active { transform: translateY(3px); box-shadow: 0 3px 0 #000; }
+    #startBtn:hover {
+      background: #222;
+    }
+
+    #startBtn:active {
+      transform: translateY(3px);
+      box-shadow: 0 3px 0 #000;
+    }
+
+    #startBtn:focus-visible {
+      outline-offset: 4px;
+    }
+
+    @media (max-width: 560px) {
+      .brand h1 { font-size: 2rem; }
+      .player-row {
+        grid-template-columns: 1fr;
+        gap: var(--space-3);
+      }
+      .player-row::after { content: none; display: none; }
+      .serve-pick { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 360px) {
+      .brand h1 { font-size: 1.75rem; }
+    }
 
     /* ========== GAME ========== */
     #game {
@@ -501,9 +737,20 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+      }
       .half.flash::after { animation: none; opacity: 0.35; }
       .confetti i { animation: none; opacity: 0; }
       .serve-label, .heard { transition: none; }
+      .serve-btn.selected,
+      .serve-btn:active:not(.selected),
+      #startBtn:active,
+      .session-card button:active {
+        transform: none;
+      }
     }
   </style>
 </head>
@@ -511,31 +758,49 @@
   <!-- ========== SETUP SCREEN ========== -->
   <section id="setup" class="screen active" aria-label="Game setup">
     <div class="setup-inner">
-      <header class="brand">
-        <h1>Ping Pong Score</h1>
-        <p>Tap a side to score — the score is announced out loud</p>
-      </header>
+      <div class="setup-scroll">
+        <header class="brand">
+          <h1>Ping Pong Score</h1>
+          <p>Tap a side to score — the score is announced out loud</p>
+        </header>
 
-      <div class="player-row">
-        <div class="player-card p1">
-          <label for="name1">Player 1</label>
-          <span class="color-tag">Orange side</span>
-          <input id="name1" type="text" value="Player 1" autocomplete="off" maxlength="24" enterkeyhint="done" />
+        <div class="player-row">
+          <div class="player-card p1">
+            <div class="player-card-head">
+              <label for="name1">Player 1</label>
+              <span class="color-tag" id="colorTag1">Orange side</span>
+            </div>
+            <input id="name1" type="text" value="Player 1" autocomplete="off" maxlength="24" enterkeyhint="done" aria-describedby="colorTag1" />
+          </div>
+          <div class="player-card p2">
+            <div class="player-card-head">
+              <label for="name2">Player 2</label>
+              <span class="color-tag" id="colorTag2">Blue side</span>
+            </div>
+            <input id="name2" type="text" value="Player 2" autocomplete="off" maxlength="24" enterkeyhint="done" aria-describedby="colorTag2" />
+          </div>
         </div>
-        <div class="player-card p2">
-          <label for="name2">Player 2</label>
-          <span class="color-tag">Blue side</span>
-          <input id="name2" type="text" value="Player 2" autocomplete="off" maxlength="24" enterkeyhint="done" />
+
+        <div class="setup-block">
+          <p class="section-label" id="serveHeading">Who serves first?</p>
+          <div class="serve-pick" role="group" aria-labelledby="serveHeading">
+            <button type="button" class="serve-btn p1 selected" id="serve1" aria-pressed="true">Player 1 serves</button>
+            <button type="button" class="serve-btn p2" id="serve2" aria-pressed="false">Player 2 serves</button>
+          </div>
+        </div>
+
+        <div id="sessionListWrap" class="session-list hidden">
+          <div class="session-list-header">
+            <p class="section-label" id="previousGamesHeading">Previous games</p>
+            <button type="button" id="clearSessionsBtn" class="clear-sessions-btn" aria-describedby="previousGamesHeading">Clear all</button>
+          </div>
+          <div id="sessionList"></div>
         </div>
       </div>
 
-      <p class="section-label" id="serveHeading">Who serves first?</p>
-      <div class="serve-pick" role="group" aria-labelledby="serveHeading">
-        <button type="button" class="serve-btn p1 selected" id="serve1" aria-pressed="true">Player 1 serves</button>
-        <button type="button" class="serve-btn p2" id="serve2" aria-pressed="false">Player 2 serves</button>
+      <div class="setup-footer">
+        <button type="button" id="startBtn">Start Game</button>
       </div>
-
-      <button type="button" id="startBtn">Start Game</button>
     </div>
   </section>
 
@@ -625,6 +890,7 @@
 
     // ---------- State ----------
     const state = {
+      sessionId: null,
       names: [...CONFIG.defaultNames],
       scores: [0, 0],
       gamesWon: [0, 0],
@@ -672,8 +938,216 @@
       winScore: $('winScore'),
       rematchBtn: $('rematchBtn'),
       newPlayersBtn: $('newPlayersBtn'),
-      confetti: $('confetti')
+      confetti: $('confetti'),
+      sessionListWrap: $('sessionListWrap'),
+      sessionList: $('sessionList'),
+      clearSessionsBtn: $('clearSessionsBtn')
     };
+
+    // ---------- localStorage key/value store ----------
+    const STORE_PREFIX = 'pingpong.';
+    const SESSION_INDEX_KEY = 'sessionIds';
+    const MAX_SESSIONS = 20;
+
+    const kv = {
+      get(key) {
+        try {
+          const raw = localStorage.getItem(STORE_PREFIX + key);
+          if (raw == null) return null;
+          return JSON.parse(raw);
+        } catch (_) {
+          return null;
+        }
+      },
+      set(key, value) {
+        try {
+          localStorage.setItem(STORE_PREFIX + key, JSON.stringify(value));
+          return true;
+        } catch (_) {
+          return false;
+        }
+      },
+      remove(key) {
+        try {
+          localStorage.removeItem(STORE_PREFIX + key);
+        } catch (_) { /* ignore */ }
+      }
+    };
+
+    function sessionStoreKey(id) {
+      return 'session.' + id;
+    }
+
+    function newSessionId() {
+      return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    }
+
+    function listSessionIds() {
+      const ids = kv.get(SESSION_INDEX_KEY);
+      return Array.isArray(ids) ? ids : [];
+    }
+
+    function loadSession(id) {
+      const rec = kv.get(sessionStoreKey(id));
+      if (!rec || typeof rec !== 'object') return null;
+      return rec;
+    }
+
+    function saveSessionRecord(rec) {
+      if (!rec || !rec.id) return;
+      kv.set(sessionStoreKey(rec.id), rec);
+      const ids = listSessionIds().filter((id) => id !== rec.id);
+      ids.unshift(rec.id);
+      const keep = ids.slice(0, MAX_SESSIONS);
+      const drop = ids.slice(MAX_SESSIONS);
+      kv.set(SESSION_INDEX_KEY, keep);
+      drop.forEach((id) => kv.remove(sessionStoreKey(id)));
+    }
+
+    function persistSession() {
+      if (!state.sessionId) return;
+      saveSessionRecord({
+        id: state.sessionId,
+        names: [...state.names],
+        scores: [...state.scores],
+        gamesWon: [...state.gamesWon],
+        firstServer: state.firstServer,
+        server: state.server,
+        history: state.history.map((h) => ({
+          scores: [...h.scores],
+          server: h.server
+        })),
+        gameOver: state.gameOver,
+        updatedAt: Date.now()
+      });
+    }
+
+    function applySession(rec) {
+      state.sessionId = rec.id;
+      state.names = [
+        String((rec.names && rec.names[0]) || CONFIG.defaultNames[0]),
+        String((rec.names && rec.names[1]) || CONFIG.defaultNames[1])
+      ];
+      state.scores = [
+        Number(rec.scores && rec.scores[0]) || 0,
+        Number(rec.scores && rec.scores[1]) || 0
+      ];
+      state.gamesWon = [
+        Number(rec.gamesWon && rec.gamesWon[0]) || 0,
+        Number(rec.gamesWon && rec.gamesWon[1]) || 0
+      ];
+      state.firstServer = rec.firstServer === 1 ? 1 : 0;
+      state.server = rec.server === 1 ? 1 : 0;
+      state.history = Array.isArray(rec.history)
+        ? rec.history.map((h) => ({
+            scores: [Number(h.scores && h.scores[0]) || 0, Number(h.scores && h.scores[1]) || 0],
+            server: h.server === 1 ? 1 : 0
+          }))
+        : [];
+      state.gameOver = !!rec.gameOver;
+      els.name1.value = state.names[0];
+      els.name2.value = state.names[1];
+      els.displayName1.textContent = state.names[0];
+      els.displayName2.textContent = state.names[1];
+      els.half1.setAttribute('aria-label', `Score point for ${state.names[0]}`);
+      els.half2.setAttribute('aria-label', `Score point for ${state.names[1]}`);
+      if (state.firstServer === 0) {
+        els.serve1.classList.add('selected');
+        els.serve2.classList.remove('selected');
+        els.serve1.setAttribute('aria-pressed', 'true');
+        els.serve2.setAttribute('aria-pressed', 'false');
+      } else {
+        els.serve2.classList.add('selected');
+        els.serve1.classList.remove('selected');
+        els.serve2.setAttribute('aria-pressed', 'true');
+        els.serve1.setAttribute('aria-pressed', 'false');
+      }
+      updateServeButtons();
+      updateScoresUI();
+    }
+
+    function restoreSession(id) {
+      const rec = loadSession(id);
+      if (!rec) return;
+      cancelSpeech();
+      applySession(rec);
+      hideWin();
+      els.menu.classList.remove('active');
+      showScreen('game');
+      if (state.gameOver) {
+        const winner = hasWinner();
+        if (winner !== null) showWin(winner);
+        releaseWakeLock();
+      } else {
+        requestWakeLock();
+      }
+    }
+
+    function clearAllSessions() {
+      const ids = listSessionIds();
+      if (!ids.length) return;
+      const ok = window.confirm(`Clear all ${ids.length} previous game${ids.length === 1 ? '' : 's'}? This cannot be undone.`);
+      if (!ok) return;
+      ids.forEach((id) => kv.remove(sessionStoreKey(id)));
+      kv.set(SESSION_INDEX_KEY, []);
+      renderSessionList();
+    }
+
+    function formatWhen(ts) {
+      if (!ts) return '';
+      const d = new Date(ts);
+      if (Number.isNaN(d.getTime())) return '';
+      return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    }
+
+    function renderSessionList() {
+      const ids = listSessionIds();
+      els.sessionList.innerHTML = '';
+      let shown = 0;
+      ids.forEach((id) => {
+        const rec = loadSession(id);
+        if (!rec) return;
+        shown += 1;
+        const n1 = (rec.names && rec.names[0]) || 'Player 1';
+        const n2 = (rec.names && rec.names[1]) || 'Player 2';
+        const s1 = rec.scores && rec.scores[0] != null ? rec.scores[0] : 0;
+        const s2 = rec.scores && rec.scores[1] != null ? rec.scores[1] : 0;
+        const g1 = (rec.gamesWon && rec.gamesWon[0]) || 0;
+        const g2 = (rec.gamesWon && rec.gamesWon[1]) || 0;
+        const gamesLine = (g1 || g2) ? ` · Games ${g1} – ${g2}` : '';
+        const when = formatWhen(rec.updatedAt);
+        const card = document.createElement('div');
+        card.className = 'session-card';
+        const meta = document.createElement('div');
+        meta.className = 'session-meta';
+        const namesEl = document.createElement('div');
+        namesEl.className = 'session-names';
+        namesEl.textContent = `${n1} vs ${n2}`;
+        const scoreEl = document.createElement('div');
+        scoreEl.className = 'session-score';
+        scoreEl.textContent = `${s1} – ${s2}${gamesLine}${when ? ' · ' + when : ''}`;
+        meta.appendChild(namesEl);
+        meta.appendChild(scoreEl);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = rec.gameOver ? 'Restore' : 'Continue';
+        btn.setAttribute('aria-label', `${rec.gameOver ? 'Restore' : 'Continue'} ${n1} vs ${n2}`);
+        btn.addEventListener('click', () => restoreSession(id));
+        card.appendChild(meta);
+        card.appendChild(btn);
+        els.sessionList.appendChild(card);
+      });
+      els.sessionListWrap.classList.toggle('hidden', shown === 0);
+    }
+
+    function prefillNamesFromLastSession() {
+      const ids = listSessionIds();
+      if (!ids.length) return;
+      const rec = loadSession(ids[0]);
+      if (!rec || !rec.names) return;
+      if (rec.names[0]) els.name1.value = rec.names[0];
+      if (rec.names[1]) els.name2.value = rec.names[1];
+    }
 
     // ---------- Speech synthesis ----------
     function flushSpeakQueue() {
@@ -786,7 +1260,15 @@
 
     // ---------- Announcements ----------
     function scorePhrase() {
-      return `${state.scores[0]}, ${state.scores[1]}`;
+      const [n1, n2] = state.names;
+      const [s1, s2] = state.scores;
+      return `${n1} ${s1}, ${n2} ${s2}`;
+    }
+
+    function winPhrase(winner) {
+      const [n1, n2] = state.names;
+      const [s1, s2] = state.scores;
+      return `${state.names[winner]} wins. ${n1} ${s1} to ${n2} ${s2}`;
     }
 
     function announceScore() {
@@ -818,13 +1300,15 @@
         state.gamesWon[winner] += 1;
         updateScoresUI();
         if (!silent) {
-          speak(`${state.scores[0]} to ${state.scores[1]}`);
+          speak(winPhrase(winner));
         }
         showWin(winner);
+        persistSession();
         releaseWakeLock();
         return;
       }
 
+      persistSession();
       if (!silent) announceScore();
     }
 
@@ -835,6 +1319,7 @@
       state.server = prev.server;
       updateScoresUI();
       haptic();
+      persistSession();
       announceScore();
     }
 
@@ -890,10 +1375,12 @@
     }
 
     document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') persistSession();
       if (document.visibilityState === 'visible' && els.game.classList.contains('active') && !state.gameOver) {
         requestWakeLock();
       }
     });
+    window.addEventListener('pagehide', persistSession);
 
     // ---------- Game flow ----------
     function readSetupNames() {
@@ -912,6 +1399,8 @@
       if (rematch) {
         if (swapServer) state.firstServer = 1 - state.firstServer;
       } else {
+        state.sessionId = newSessionId();
+        state.gamesWon = [0, 0];
         state.firstServer = els.serve1.classList.contains('selected') ? 0 : 1;
       }
 
@@ -923,18 +1412,22 @@
       hideWin();
       els.menu.classList.remove('active');
       updateScoresUI();
+      persistSession();
       showScreen('game');
       requestWakeLock();
     }
 
     function goToSetup({ resetGames } = {}) {
+      persistSession();
       cancelSpeech();
       releaseWakeLock();
       hideWin();
       els.menu.classList.remove('active');
       if (resetGames) state.gamesWon = [0, 0];
+      state.sessionId = null;
       showScreen('setup');
       updateServeButtons();
+      renderSessionList();
     }
 
     function resetThisGame() {
@@ -945,6 +1438,7 @@
       hideWin();
       updateScoresUI();
       els.menu.classList.remove('active');
+      persistSession();
       requestWakeLock();
       announceScore();
     }
@@ -960,6 +1454,14 @@
 
     // ---------- Wire events ----------
     function wire() {
+      const selectNameOnFocus = (input) => {
+        input.addEventListener('focus', () => {
+          requestAnimationFrame(() => input.select());
+        });
+      };
+      selectNameOnFocus(els.name1);
+      selectNameOnFocus(els.name2);
+
       els.name1.addEventListener('input', updateServeButtons);
       els.name2.addEventListener('input', updateServeButtons);
 
@@ -993,6 +1495,8 @@
       els.resetScoresBtn.addEventListener('click', () => resetThisGame());
       els.endToSetupBtn.addEventListener('click', () => goToSetup({ resetGames: true }));
 
+      els.clearSessionsBtn.addEventListener('click', () => clearAllSessions());
+
       els.rematchBtn.addEventListener('click', () => {
         startGame({ rematch: true, swapServer: true });
       });
@@ -1018,7 +1522,9 @@
     }
 
     wire();
+    prefillNamesFromLastSession();
     updateServeButtons();
+    renderSessionList();
   </script>
 </body>
 </html>
