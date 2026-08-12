@@ -602,7 +602,8 @@
           Microphone is used only when you press the mic button. HTTPS is required for voice on most phones.
         </p>
         <p class="mic-note hidden" id="iosVoiceHint">
-          On iPhone: turn on continuous listening, then Start Game (allow the mic when asked). If listening pauses after a score announcement, tap the mic to resume.
+          On iPhone: allow Microphone for this site, turn on continuous listening, then Start Game.
+          If listening pauses, tap the mic to resume (iOS often requires a tap after each announcement).
         </p>
         <p class="mic-note hidden" id="voiceUnsupported">
           Voice scoring is not supported in this browser. Tap scoring still works.
@@ -730,7 +731,9 @@
       lastVoiceTranscript: '',
       voiceHandled: false,
       restartTimer: null,
-      micPaused: false // user paused continuous listening via mic button
+      micPaused: false, // user paused continuous listening via mic button
+      micStreamOk: false, // getUserMedia succeeded at least once
+      lastStartFromGesture: false
     };
 
     // iOS Safari has fragile SpeechRecognition: requires sync user-gesture start,
@@ -1171,21 +1174,35 @@
 
       rec.onerror = (event) => {
         const err = event.error || 'error';
+        const fromGesture = state.lastStartFromGesture;
+        state.listening = false;
+        clearListenTimer();
+
         if (err === 'not-allowed' || err === 'service-not-allowed') {
-          showHeard('Mic permission blocked — tap scoring still works');
-          state.continuousListen = false;
-          state.micPaused = false;
-          els.continuousListen.checked = false;
-          els.continuousListenMenu.checked = false;
-        } else if (err === 'network') {
+          // iOS often fires not-allowed on auto-restart (no user gesture) even when
+          // Microphone is Allowed. That is NOT a real permission denial.
+          if (!fromGesture && state.continuousListen) {
+            state.micPaused = true;
+            setMicListeningUI(false);
+            showHeard('Listening paused — tap mic to resume');
+            return;
+          }
+          setMicListeningUI(false);
+          showHeard(
+            err === 'service-not-allowed'
+              ? 'Speech recognition unavailable — try again or use tap scoring'
+              : 'Microphone or speech access denied — check Safari site settings'
+          );
+          return;
+        }
+
+        if (err === 'network') {
           showHeard('Voice needs a network connection');
         } else if (err !== 'aborted' && err !== 'no-speech') {
           showHeard('Voice error: ' + err);
         }
-        state.listening = false;
-        clearListenTimer();
         setMicListeningUI(false);
-        if (err !== 'not-allowed' && err !== 'service-not-allowed' && err !== 'aborted') {
+        if (err !== 'aborted') {
           scheduleContinuousRestart(IS_IOS ? CONFIG.iosContinuousRestartMs : 300);
         }
       };
@@ -1241,11 +1258,29 @@
       speak('Sorry, I did not catch that');
     }
 
-    function startListening({ continuous } = {}) {
+    /** Ask for microphone via getUserMedia (clearest iOS permission prompt). */
+    async function ensureMicAccess() {
+      if (state.micStreamOk) return true;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return true;
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((t) => t.stop());
+        state.micStreamOk = true;
+        return true;
+      } catch (_) {
+        showHeard('Microphone permission is blocked in Settings');
+        state.micStreamOk = false;
+        return false;
+      }
+    }
+
+    function startListening({ continuous, fromGesture } = {}) {
       if (!speechSupported()) return;
       if (!state.recognition) state.recognition = createRecognition();
       if (!state.recognition) return;
       if (state.listening) return;
+
+      state.lastStartFromGesture = !!fromGesture;
 
       // Free the audio session before opening the mic (critical on iOS)
       cancelSpeech();
@@ -1267,8 +1302,25 @@
       } catch (err) {
         state.listening = false;
         setMicListeningUI(false);
-        showHeard(continuous ? 'Tap mic to resume listening' : 'Could not start mic — tap again');
+        if (continuous) {
+          state.micPaused = true;
+          showHeard('Tap mic to resume listening');
+        } else {
+          showHeard('Could not start mic — tap again');
+        }
       }
+    }
+
+    /** User-gesture entry: optionally warm up mic permission, then start recognition. */
+    async function startListeningFromGesture({ continuous } = {}) {
+      noteMicPermissionOnce();
+      // getUserMedia shows the real Microphone prompt on iOS; SpeechRecognition alone
+      // can fail with not-allowed for other reasons (no gesture, speech service, etc.).
+      if (IS_IOS) {
+        const ok = await ensureMicAccess();
+        if (!ok) return;
+      }
+      startListening({ continuous: !!continuous, fromGesture: true });
     }
 
     function stopListening() {
@@ -1328,8 +1380,7 @@
 
       // Start Game click is a user gesture — required for the first iOS mic start.
       if (state.continuousListen && speechSupported()) {
-        noteMicPermissionOnce();
-        startListening({ continuous: true });
+        startListeningFromGesture({ continuous: true });
       } else {
         setMicListeningUI(false);
       }
@@ -1404,8 +1455,7 @@
       els.resumeBtn.addEventListener('click', () => {
         els.menu.classList.remove('active');
         if (state.continuousListen && !state.micPaused && speechSupported()) {
-          noteMicPermissionOnce();
-          startListening({ continuous: true });
+          startListeningFromGesture({ continuous: true });
         }
       });
       els.resetScoresBtn.addEventListener('click', () => resetThisGame());
@@ -1419,8 +1469,7 @@
         els.continuousListen.checked = state.continuousListen;
         state.micPaused = false;
         if (state.continuousListen) {
-          noteMicPermissionOnce();
-          startListening({ continuous: true });
+          startListeningFromGesture({ continuous: true });
         } else {
           clearRestartTimer();
           stopListening();
@@ -1445,8 +1494,7 @@
               showHeard('Mic paused');
             } else {
               state.micPaused = false;
-              noteMicPermissionOnce();
-              startListening({ continuous: true });
+              startListeningFromGesture({ continuous: true });
             }
             return;
           }
@@ -1454,8 +1502,7 @@
             stopListening();
             return;
           }
-          noteMicPermissionOnce();
-          startListening({ continuous: false });
+          startListeningFromGesture({ continuous: false });
         });
       } else {
         const micDown = (e) => {
@@ -1469,13 +1516,11 @@
               showHeard('Mic paused');
             } else {
               state.micPaused = false;
-              noteMicPermissionOnce();
-              startListening({ continuous: true });
+              startListeningFromGesture({ continuous: true });
             }
             return;
           }
-          noteMicPermissionOnce();
-          startListening({ continuous: false });
+          startListeningFromGesture({ continuous: false });
         };
         const micUp = (e) => {
           e.preventDefault();
