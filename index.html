@@ -25,6 +25,8 @@
       --bar: #1A1A1A;
       --safe-b: env(safe-area-inset-bottom, 0px);
       --safe-t: env(safe-area-inset-top, 0px);
+      --safe-l: env(safe-area-inset-left, 0px);
+      --safe-r: env(safe-area-inset-right, 0px);
       --touch-min: 64px;
       --space-1: 8px;
       --space-2: 12px;
@@ -525,6 +527,13 @@
       display: block;
     }
 
+    .half-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
     .player-name {
       font-size: clamp(1.25rem, 3.5vw, 2rem);
       font-weight: 900;
@@ -545,7 +554,109 @@
     }
 
     @media (orientation: portrait) {
-      .score { font-size: 28vh; }
+      #game.active {
+        display: grid;
+        grid-template-columns: 12.5% 1fr;
+        grid-template-rows: 1fr;
+      }
+
+      .court {
+        grid-column: 2;
+        grid-row: 1;
+        flex: unset;
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 1fr;
+      }
+
+      .half {
+        padding: 12px;
+      }
+
+      .half-content {
+        transform: rotate(90deg);
+        gap: 4px;
+      }
+
+      .serve-label {
+        position: static;
+        opacity: 1;
+        transform: none;
+        margin-bottom: 4px;
+      }
+
+      .half:not(.serving) .serve-label {
+        opacity: 0;
+        height: 0;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+      }
+
+      .score { font-size: min(36vw, 24vh); }
+
+      .games-badge {
+        top: 50%;
+        left: auto;
+        right: calc(10px + var(--safe-r));
+        transform: translateY(-50%) rotate(90deg);
+        transform-origin: center center;
+      }
+
+      .heard {
+        top: 50%;
+        left: calc(12.5% + (87.5% / 2));
+        bottom: auto;
+        transform: translate(-50%, -50%) rotate(90deg);
+        max-width: min(60vh, 520px);
+      }
+
+      #game .toolbar {
+        grid-column: 1;
+        grid-row: 1;
+        position: relative;
+        z-index: 8;
+        display: grid;
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 1fr;
+        align-self: stretch;
+        width: auto;
+        height: 100%;
+        gap: 0;
+        padding: 0;
+        padding-left: var(--safe-l);
+        border-top: none;
+        border-right: 3px solid #000;
+      }
+
+      /* Undo beside orange (half1); Menu beside blue (half2) */
+      #game .toolbar button {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        border-radius: 0;
+        border: none;
+        overflow: hidden;
+      }
+
+      #game #undoBtn {
+        grid-row: 1;
+        border-bottom: 2px solid #000;
+      }
+
+      #game #menuBtn {
+        grid-row: 2;
+      }
+
+      #game .toolbar-label {
+        display: block;
+        transform: rotate(90deg);
+        white-space: nowrap;
+        letter-spacing: 0.06em;
+        font-size: 1.25rem;
+      }
     }
 
     .color-name {
@@ -809,34 +920,38 @@
     <div class="games-badge" id="gamesBadge" aria-live="polite">Games: 0 – 0</div>
     <div class="court">
       <button type="button" class="half p1 serving" id="half1" aria-label="Score point for player 1">
-        <span class="serve-label">
-          <svg class="paddle-icon" viewBox="0 0 32 32" aria-hidden="true">
-            <ellipse cx="14" cy="12" rx="10" ry="11" fill="#fff"/>
-            <rect x="20" y="18" width="5" height="12" rx="2" transform="rotate(35 22 24)" fill="#5c3317"/>
-          </svg>
-          Serving
+        <span class="half-content">
+          <span class="serve-label">
+            <svg class="paddle-icon" viewBox="0 0 32 32" aria-hidden="true">
+              <ellipse cx="14" cy="12" rx="10" ry="11" fill="#fff"/>
+              <rect x="20" y="18" width="5" height="12" rx="2" transform="rotate(35 22 24)" fill="#5c3317"/>
+            </svg>
+            Serving
+          </span>
+          <span class="player-name" id="displayName1">Player 1</span>
+          <span class="score" id="score1">0</span>
+          <span class="color-name">Orange</span>
         </span>
-        <span class="player-name" id="displayName1">Player 1</span>
-        <span class="score" id="score1">0</span>
-        <span class="color-name">Orange</span>
       </button>
       <button type="button" class="half p2" id="half2" aria-label="Score point for player 2">
-        <span class="serve-label">
-          <svg class="paddle-icon" viewBox="0 0 32 32" aria-hidden="true">
-            <ellipse cx="14" cy="12" rx="10" ry="11" fill="#fff"/>
-            <rect x="20" y="18" width="5" height="12" rx="2" transform="rotate(35 22 24)" fill="#5c3317"/>
-          </svg>
-          Serving
+        <span class="half-content">
+          <span class="serve-label">
+            <svg class="paddle-icon" viewBox="0 0 32 32" aria-hidden="true">
+              <ellipse cx="14" cy="12" rx="10" ry="11" fill="#fff"/>
+              <rect x="20" y="18" width="5" height="12" rx="2" transform="rotate(35 22 24)" fill="#5c3317"/>
+            </svg>
+            Serving
+          </span>
+          <span class="player-name" id="displayName2">Player 2</span>
+          <span class="score" id="score2">0</span>
+          <span class="color-name">Blue</span>
         </span>
-        <span class="player-name" id="displayName2">Player 2</span>
-        <span class="score" id="score2">0</span>
-        <span class="color-name">Blue</span>
       </button>
     </div>
     <div class="heard" id="heardText" aria-live="polite"></div>
     <div class="toolbar">
-      <button type="button" id="undoBtn" aria-label="Undo last point">Undo</button>
-      <button type="button" id="menuBtn" aria-label="Open menu">Menu</button>
+      <button type="button" id="undoBtn" aria-label="Undo last point"><span class="toolbar-label">Undo</span></button>
+      <button type="button" id="menuBtn" aria-label="Open menu"><span class="toolbar-label">Menu</span></button>
     </div>
   </section>
 
