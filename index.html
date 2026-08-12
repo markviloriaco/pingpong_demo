@@ -605,14 +605,6 @@
         transform-origin: center center;
       }
 
-      .heard {
-        top: 50%;
-        left: calc(12.5% + (87.5% / 2));
-        bottom: auto;
-        transform: translate(-50%, -50%) rotate(90deg);
-        max-width: min(60vh, 520px);
-      }
-
       #game .toolbar {
         grid-column: 1;
         grid-row: 1;
@@ -667,27 +659,6 @@
       text-transform: uppercase;
       opacity: 0.9;
     }
-
-    .heard {
-      position: absolute;
-      bottom: calc(88px + var(--safe-b));
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 6;
-      max-width: min(90vw, 520px);
-      background: rgba(0,0,0,0.82);
-      color: #fff;
-      font-size: 1.15rem;
-      font-weight: 700;
-      padding: 12px 18px;
-      border-radius: 12px;
-      text-align: center;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 200ms var(--ease);
-    }
-
-    .heard.show { opacity: 1; }
 
     .toolbar {
       display: grid;
@@ -855,7 +826,7 @@
       }
       .half.flash::after { animation: none; opacity: 0.35; }
       .confetti i { animation: none; opacity: 0; }
-      .serve-label, .heard { transition: none; }
+      .serve-label { transition: none; }
       .serve-btn.selected,
       .serve-btn:active:not(.selected),
       #startBtn:active,
@@ -948,7 +919,6 @@
         </span>
       </button>
     </div>
-    <div class="heard" id="heardText" aria-live="polite"></div>
     <div class="toolbar">
       <button type="button" id="undoBtn" aria-label="Undo last point"><span class="toolbar-label">Undo</span></button>
       <button type="button" id="menuBtn" aria-label="Open menu"><span class="toolbar-label">Menu</span></button>
@@ -1015,7 +985,6 @@
       lastTapAt: 0,
       gameOver: false,
       wakeLock: null,
-      heardTimer: null,
       speakQueue: [],
       speakTimer: null,
       ttsBusyUntil: 0
@@ -1041,7 +1010,6 @@
       displayName1: $('displayName1'),
       displayName2: $('displayName2'),
       gamesBadge: $('gamesBadge'),
-      heardText: $('heardText'),
       undoBtn: $('undoBtn'),
       menuBtn: $('menuBtn'),
       menu: $('menu'),
@@ -1295,7 +1263,6 @@
 
     function speak(text) {
       if (!text) return;
-      showHeard(text);
       state.speakQueue.push(text);
       clearTimeout(state.speakTimer);
       state.speakTimer = setTimeout(flushSpeakQueue, IS_IOS ? 180 : 0);
@@ -1352,13 +1319,6 @@
       void el.offsetWidth;
       el.classList.add('flash');
       setTimeout(() => el.classList.remove('flash'), 300);
-    }
-
-    function showHeard(text, durationMs) {
-      els.heardText.textContent = text;
-      els.heardText.classList.add('show');
-      clearTimeout(state.heardTimer);
-      state.heardTimer = setTimeout(() => els.heardText.classList.remove('show'), durationMs || 4500);
     }
 
     function showScreen(name) {
