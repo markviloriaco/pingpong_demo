@@ -776,7 +776,8 @@
       recognitionGeneration: 0,
       selfSpeechActive: false, // TTS currently playing while the mic stays on
       selfSpeechUntil: 0,      // ignore recognition results until this time
-      voiceDebug: false
+      voiceDebug: false,
+      langFallback: false      // retry with device default language after service-not-allowed
     };
 
     // ---------- Voice debug log (rolling; shown via Menu → Voice debug) ----------
@@ -795,6 +796,12 @@
     // conflicts with speechSynthesis, and cannot reliably auto-restart.
     const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+    // On iOS, Apple's speech service is granted per app. Chrome/Edge/Firefox/
+    // in-app browsers wrap WebKit but lack the speech-recognition entitlement,
+    // so recognition always fails with service-not-allowed outside Safari.
+    const IS_IOS_ALT_BROWSER = IS_IOS &&
+      /CriOS|FxiOS|EdgiOS|OPiOS|OPT\/|YaBrowser|GSA|DuckDuckGo|Brave|FBAN|FBAV|Instagram|Line\//i.test(navigator.userAgent);
 
     // ---------- DOM ----------
     const $ = (id) => document.getElementById(id);
@@ -1015,11 +1022,11 @@
       setTimeout(() => el.classList.remove('flash'), 300);
     }
 
-    function showHeard(text) {
+    function showHeard(text, durationMs) {
       els.heardText.textContent = text;
       els.heardText.classList.add('show');
       clearTimeout(state.heardTimer);
-      state.heardTimer = setTimeout(() => els.heardText.classList.remove('show'), 4500);
+      state.heardTimer = setTimeout(() => els.heardText.classList.remove('show'), durationMs || 4500);
     }
 
     function showScreen(name) {
@@ -1273,7 +1280,9 @@
       if (!SR) return null;
       const rec = new SR();
       const gen = ++state.recognitionGeneration;
-      rec.lang = CONFIG.speechLang;
+      // WebKit rejects with service-not-allowed if Dictation doesn't have the
+      // requested language installed — fall back to the device default.
+      if (!state.langFallback) rec.lang = CONFIG.speechLang;
       rec.interimResults = true;
       rec.maxAlternatives = 3;
       // Keep the session open across phrases on iOS
@@ -1348,7 +1357,29 @@
           return;
         }
 
-        if (err === 'not-allowed' || err === 'service-not-allowed') {
+        if (err === 'service-not-allowed') {
+          // iOS: the system speech service itself is unavailable. Causes:
+          // non-Safari browser (no speech entitlement), Dictation off,
+          // requested language not installed, Screen Time, Lockdown Mode.
+          // First try once more with the device default language.
+          if (!state.langFallback) {
+            state.langFallback = true;
+            vlog('retrying with device default language');
+            destroyRecognition();
+            if (wantsContinuousListen()) scheduleContinuousRestart(400);
+            return;
+          }
+          clearRestartTimer();
+          state.micPaused = true;
+          setMicListeningUI(false);
+          showHeard(IS_IOS_ALT_BROWSER
+            ? 'Voice only works in the Safari app — open this page in Safari'
+            : 'iOS is blocking speech: check Enable Dictation, Screen Time → Siri & Dictation, and Lockdown Mode',
+            12000);
+          return;
+        }
+
+        if (err === 'not-allowed') {
           // Retry quietly a couple of times before asking for a tap.
           if (wantsContinuousListen() && state.autoRestartAttempts < 2) {
             setMicListeningUI(false);
@@ -1498,7 +1529,8 @@
       } catch (_) {}
 
       try {
-        vlog('rec.start() (cont=' + !!continuous + ', gesture=' + !!fromGesture + ')');
+        vlog('rec.start() (cont=' + !!continuous + ', gesture=' + !!fromGesture +
+          ', lang=' + (rec.lang || 'device default') + ')');
         rec.start();
         // Wait for onstart to flip UI to Listening (and mic indicator)
       } catch (err) {
@@ -1513,8 +1545,19 @@
       }
     }
 
+    let envLogged = false;
+    function logEnvironmentOnce() {
+      if (envLogged) return;
+      envLogged = true;
+      vlog('ua: ' + navigator.userAgent);
+      vlog('deviceLang: ' + navigator.language +
+        ', standalone: ' + (navigator.standalone === true) +
+        ', altBrowser: ' + IS_IOS_ALT_BROWSER);
+    }
+
     /** One-tap arm: start recognition in the same turn as the tap (required on iOS). */
     function startListeningFromGesture({ continuous } = {}) {
+      logEnvironmentOnce();
       noteMicPermissionOnce();
       state.micPaused = false;
       state.autoRestartAttempts = 0;
