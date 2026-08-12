@@ -582,17 +582,17 @@
 
       .serve-label {
         position: static;
-        opacity: 1;
         transform: none;
         margin-bottom: 4px;
+        /* Keep size when hidden so scores don't jump on serve change */
+        visibility: hidden;
+        opacity: 0;
       }
 
-      .half:not(.serving) .serve-label {
-        opacity: 0;
-        height: 0;
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
+      .half.serving .serve-label {
+        visibility: visible;
+        opacity: 1;
+        transform: none;
       }
 
       .score { font-size: min(36vw, 24vh); }
@@ -966,6 +966,7 @@
       speechLang: 'en-US',
       vibrateMs: 40,
       ttsCooldownMs: 400,
+      pointSoundLeadMs: 320,  // Play score SFX, then announce after this delay
       colors: {
         0: { key: 'orange', label: 'Orange', css: '#E85D04' },
         1: { key: 'blue', label: 'Blue', css: '#0077B6' }
@@ -987,7 +988,9 @@
       wakeLock: null,
       speakQueue: [],
       speakTimer: null,
-      ttsBusyUntil: 0
+      announceTimer: null,
+      ttsBusyUntil: 0,
+      audioCtx: null
     };
 
     const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -1233,6 +1236,43 @@
     }
 
     // ---------- Speech synthesis ----------
+    function getAudioCtx() {
+      if (!state.audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        state.audioCtx = new AC();
+      }
+      if (state.audioCtx.state === 'suspended') {
+        state.audioCtx.resume().catch(() => {});
+      }
+      return state.audioCtx;
+    }
+
+    /** Short bright "point" ping before the spoken score. */
+    function playPointSound() {
+      const ctx = getAudioCtx();
+      if (!ctx) return;
+      const now = ctx.currentTime;
+
+      const tone = (freq, start, dur, peak) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, start);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(peak, start + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + dur + 0.02);
+      };
+
+      // Soft two-note ping (table-tennis-ish, not harsh)
+      tone(988, now, 0.11, 0.2);
+      tone(1480, now + 0.07, 0.16, 0.14);
+    }
+
     function flushSpeakQueue() {
       clearTimeout(state.speakTimer);
       if (!state.speakQueue.length) return;
@@ -1270,9 +1310,16 @@
 
     function cancelSpeech() {
       clearTimeout(state.speakTimer);
+      clearTimeout(state.announceTimer);
       state.speakQueue = [];
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       state.ttsBusyUntil = 0;
+    }
+
+    function announceAfterPointSound(text) {
+      clearTimeout(state.announceTimer);
+      playPointSound();
+      state.announceTimer = setTimeout(() => speak(text), CONFIG.pointSoundLeadMs);
     }
 
     function haptic() {
@@ -1375,7 +1422,7 @@
         state.gamesWon[winner] += 1;
         updateScoresUI();
         if (!silent) {
-          speak(winPhrase(winner));
+          announceAfterPointSound(winPhrase(winner));
         }
         showWin(winner);
         persistSession();
@@ -1384,7 +1431,7 @@
       }
 
       persistSession();
-      if (!silent) announceScore();
+      if (!silent) announceAfterPointSound(scorePhrase());
     }
 
     function undo() {
