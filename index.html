@@ -603,8 +603,8 @@
         </p>
         <p class="mic-note hidden" id="iosVoiceHint">
           On iPhone: turn on continuous listening and tap Start Game once (allow the mic).
-          Keep the mic on for voice scoring. On iPhone, score callouts appear on screen
-          (not spoken) while continuous listening is on — speaking them would turn the mic off.
+          The mic stays on for the whole game and the score is announced out loud
+          after each point.
         </p>
         <p class="mic-note hidden" id="voiceUnsupported">
           Voice scoring is not supported in this browser. Tap scoring still works.
@@ -702,6 +702,9 @@
       ttsCooldownMs: 400,
       // Extra pause after TTS before restarting the mic on iOS continuous mode
       iosContinuousRestartMs: 700,
+      // After an announcement finishes, ignore recognition results for this long
+      // so the app doesn't hear its own voice and score a phantom point.
+      selfEchoTailMs: 1200,
       colors: {
         0: { key: 'orange', label: 'Orange', css: '#E85D04' },
         1: { key: 'blue', label: 'Blue', css: '#0077B6' }
@@ -742,7 +745,9 @@
       autoRestartAttempts: 0,
       lastStartFromGesture: false,
       lastVoiceScoreAt: 0,
-      recognitionGeneration: 0
+      recognitionGeneration: 0,
+      selfSpeechActive: false, // TTS currently playing while the mic stays on
+      selfSpeechUntil: 0       // ignore recognition results until this time
     };
 
     // iOS Safari has fragile SpeechRecognition: requires sync user-gesture start,
@@ -788,8 +793,9 @@
     };
 
     // ---------- Speech synthesis ----------
-    // CRITICAL iOS constraint: stopping SpeechRecognition to play TTS cannot be
-    // restarted without another user tap. So in continuous mode we announce on-screen.
+    // In continuous mode we never stop the recognizer for TTS (iOS cannot
+    // restart it without a tap). Instead we speak over the live recognizer
+    // and suppress recognition results while we talk (self-echo guard).
     function flushSpeakQueue() {
       clearTimeout(state.speakTimer);
       if ((state.listening && !state.pausingForTts) || !state.speakQueue.length) return;
@@ -821,13 +827,39 @@
       window.speechSynthesis.speak(u);
     }
 
+    /** Speak on top of a live recognizer without stopping it. The self-echo
+     * guard makes onresult ignore everything heard while we talk (plus a tail),
+     * so the announcement can't score points by itself. */
+    function speakOverRecognition(text) {
+      if (!('speechSynthesis' in window)) return;
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = CONFIG.speechRate;
+      u.pitch = CONFIG.speechPitch;
+      u.lang = CONFIG.speechLang;
+      state.selfSpeechActive = true;
+      const done = () => {
+        if (!state.selfSpeechActive) return;
+        state.selfSpeechActive = false;
+        state.selfSpeechUntil = Date.now() + CONFIG.selfEchoTailMs;
+      };
+      u.onend = done;
+      u.onerror = done;
+      window.speechSynthesis.speak(u);
+      // Safety valve: iOS occasionally drops onend; never leave the guard stuck.
+      setTimeout(done, 15000);
+    }
+
     function speak(text) {
       if (!text) return;
 
-      // iOS continuous: NEVER stop the recognizer for TTS (cannot restart without a tap).
-      // That was killing the mic after every manual point and causing "Reconnecting…" flicker.
-      if (IS_IOS && state.continuousListen && !state.gameOver) {
+      // Continuous mode: keep the recognizer running and announce over it.
+      // The persistent mic stream keeps the iOS audio session alive so TTS
+      // and recognition can coexist; stopping the recognizer for TTS would
+      // require a new tap to restart on iOS.
+      if (state.continuousListen && !state.gameOver && (state.listening || state.recognition)) {
         showHeard(text);
+        speakOverRecognition(text);
         return;
       }
 
@@ -843,6 +875,8 @@
       clearTimeout(state.speakTimer);
       state.speakQueue = [];
       state.pausingForTts = false;
+      state.selfSpeechActive = false;
+      state.selfSpeechUntil = 0;
       if ('speechSynthesis' in window) window.speechSynthesis.cancel();
       state.ttsBusyUntil = 0;
     }
@@ -859,17 +893,28 @@
       } catch (_) { /* iOS 17+ only */ }
     }
 
-    /** Prime mic permission once, then release so SpeechRecognition can own the mic. */
-    async function primeMicPermission() {
-      if (state.micStreamOk) return true;
+    /**
+     * Acquire and HOLD a mic stream for the whole session.
+     * Keeping the tracks live keeps the iOS audio session warm, which:
+     *  - stops iOS from tearing down SpeechRecognition seconds after start
+     *    (stopping the tracks was killing the recognizer — mic on → off bug),
+     *  - lets recognition auto-restart without a new user tap,
+     *  - lets speechSynthesis play while the recognizer keeps running.
+     */
+    async function acquirePersistentMic() {
+      const live = state.micStream &&
+        state.micStream.getTracks().some((t) => t.readyState === 'live');
+      if (live) {
+        state.micStreamOk = true;
+        return true;
+      }
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         state.micStreamOk = true;
         return true;
       }
       setAudioSessionForMic();
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((t) => { try { t.stop(); } catch (_) {} });
+        state.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
         state.micStreamOk = true;
         return true;
       } catch (_) {
@@ -877,6 +922,11 @@
         showHeard('Microphone permission blocked in Settings');
         return false;
       }
+    }
+
+    function hasLiveMicStream() {
+      return !!(state.micStream &&
+        state.micStream.getTracks().some((t) => t.readyState === 'live'));
     }
 
     function releaseMicStream() {
@@ -1143,7 +1193,7 @@
         return;
       }
       // Cap blind auto-restarts — iOS needs a tap after the session truly dies
-      if (state.autoRestartAttempts >= 2) {
+      if (state.autoRestartAttempts >= 4) {
         state.micPaused = true;
         setMicListeningUI(false);
         showHeard('Mic paused — tap to resume listening');
@@ -1226,6 +1276,12 @@
 
       rec.onresult = (event) => {
         if (gen !== state.recognitionGeneration) return;
+        // Ignore everything heard while (or just after) the app itself speaks,
+        // otherwise "Point to Player 1" would score a phantom point.
+        if (state.selfSpeechActive || Date.now() < state.selfSpeechUntil) {
+          state.lastVoiceTranscript = '';
+          return;
+        }
         const results = event.results;
         let finalText = '';
         let interimText = '';
@@ -1273,7 +1329,13 @@
         }
 
         if (err === 'not-allowed' || err === 'service-not-allowed') {
-          // Do not flicker reconnect — ask for one tap
+          // With a live held mic stream the session is usually still warm —
+          // retry quietly before asking for a tap.
+          if (hasLiveMicStream() && wantsContinuousListen() && state.autoRestartAttempts < 4) {
+            setMicListeningUI(false);
+            scheduleContinuousRestart(700);
+            return;
+          }
           clearRestartTimer();
           state.micPaused = true;
           setMicListeningUI(false);
@@ -1436,16 +1498,17 @@
       state.autoRestartAttempts = 0;
       if (continuous) state.continuousListen = true;
 
-      releaseMicStream();
       setAudioSessionForMic();
       if (IS_IOS) state.voiceArmed = true;
 
       // MUST be synchronous with the user tap — awaiting getUserMedia first breaks iOS start()
       startListening({ continuous: !!continuous, fromGesture: true });
 
-      // Warm permission in parallel (does not gate recognition.start)
-      if (IS_IOS && !state.micStreamOk) {
-        primeMicPermission().catch(() => {});
+      // Acquire and HOLD a mic stream in parallel. Its tracks must stay live
+      // for the whole session: stopping them tears down the iOS audio session
+      // and kills the recognizer seconds after start.
+      if (continuous || IS_IOS) {
+        acquirePersistentMic().catch(() => {});
       }
     }
 
