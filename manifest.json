@@ -1,0 +1,24 @@
+{
+  "name": "Ping Pong Score",
+  "short_name": "Ping Pong",
+  "description": "Senior-friendly ping pong score tracker with tap and voice scoring",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#111111",
+  "theme_color": "#E85D04",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
