@@ -602,8 +602,8 @@
           Microphone is used only when you press the mic button. HTTPS is required for voice on most phones.
         </p>
         <p class="mic-note hidden" id="iosVoiceHint">
-          On iPhone: allow Microphone for this site, turn on continuous listening, then Start Game.
-          If listening pauses, tap the mic to resume (iOS often requires a tap after each announcement).
+          On iPhone: enable continuous listening, tap Start Game, and allow access if asked.
+          Speech needs network. If it pauses, tap the mic (normal on iOS after score announcements).
         </p>
         <p class="mic-note hidden" id="voiceUnsupported">
           Voice scoring is not supported in this browser. Tap scoring still works.
@@ -1178,26 +1178,22 @@
         state.listening = false;
         clearListenTimer();
 
+        // iOS frequently returns not-allowed / service-not-allowed when start() is
+        // outside a tap, or when the audio session is busy after TTS/getUserMedia.
+        // Treat those as "paused — tap to resume", not a permanent settings failure.
         if (err === 'not-allowed' || err === 'service-not-allowed') {
-          // iOS often fires not-allowed on auto-restart (no user gesture) even when
-          // Microphone is Allowed. That is NOT a real permission denial.
-          if (!fromGesture && state.continuousListen) {
-            state.micPaused = true;
-            setMicListeningUI(false);
-            showHeard('Listening paused — tap mic to resume');
-            return;
-          }
+          state.micPaused = true;
           setMicListeningUI(false);
-          showHeard(
-            err === 'service-not-allowed'
-              ? 'Speech recognition unavailable — try again or use tap scoring'
-              : 'Microphone or speech access denied — check Safari site settings'
-          );
+          if (!fromGesture && state.continuousListen) {
+            showHeard('Listening paused — tap mic to resume');
+          } else {
+            showHeard('Listening needs a tap — tap mic to try again');
+          }
           return;
         }
 
         if (err === 'network') {
-          showHeard('Voice needs a network connection');
+          showHeard('Voice needs a network connection (speech runs online on iPhone)');
         } else if (err !== 'aborted' && err !== 'no-speech') {
           showHeard('Voice error: ' + err);
         }
@@ -1258,22 +1254,10 @@
       speak('Sorry, I did not catch that');
     }
 
-    /** Ask for microphone via getUserMedia (clearest iOS permission prompt). */
-    async function ensureMicAccess() {
-      if (state.micStreamOk) return true;
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return true;
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((t) => t.stop());
-        state.micStreamOk = true;
-        return true;
-      } catch (_) {
-        showHeard('Microphone permission is blocked in Settings');
-        state.micStreamOk = false;
-        return false;
-      }
-    }
-
+    /**
+     * getUserMedia and SpeechRecognition fight on iOS Safari — do not warm up the
+     * mic with getUserMedia before recognition.start(); it often yields service-not-allowed.
+     */
     function startListening({ continuous, fromGesture } = {}) {
       if (!speechSupported()) return;
       if (!state.recognition) state.recognition = createRecognition();
@@ -1281,9 +1265,14 @@
       if (state.listening) return;
 
       state.lastStartFromGesture = !!fromGesture;
+      state.micPaused = false;
 
-      // Free the audio session before opening the mic (critical on iOS)
-      cancelSpeech();
+      // Only cancel TTS if it is actually holding the audio session
+      const speaking = typeof speechSynthesis !== 'undefined' &&
+        (speechSynthesis.speaking || speechSynthesis.pending);
+      if (speaking || state.speakQueue.length) {
+        cancelSpeech();
+      }
       clearRestartTimer();
 
       try {
@@ -1291,8 +1280,8 @@
         state.listening = true;
         setMicListeningUI(true);
         if (!continuous) showHeard('Listening…');
+        else showHeard('Listening continuously…');
 
-        // Tap-to-talk sessions auto-stop; continuous keeps going until result/onend restart.
         clearListenTimer();
         if (!continuous) {
           state.listenTimer = setTimeout(() => {
@@ -1301,25 +1290,15 @@
         }
       } catch (err) {
         state.listening = false;
+        state.micPaused = true;
         setMicListeningUI(false);
-        if (continuous) {
-          state.micPaused = true;
-          showHeard('Tap mic to resume listening');
-        } else {
-          showHeard('Could not start mic — tap again');
-        }
+        showHeard(continuous ? 'Tap mic to resume listening' : 'Could not start mic — tap again');
       }
     }
 
-    /** User-gesture entry: optionally warm up mic permission, then start recognition. */
-    async function startListeningFromGesture({ continuous } = {}) {
+    /** Must stay synchronous on iOS so recognition.start() keeps the user-gesture. */
+    function startListeningFromGesture({ continuous } = {}) {
       noteMicPermissionOnce();
-      // getUserMedia shows the real Microphone prompt on iOS; SpeechRecognition alone
-      // can fail with not-allowed for other reasons (no gesture, speech service, etc.).
-      if (IS_IOS) {
-        const ok = await ensureMicAccess();
-        if (!ok) return;
-      }
       startListening({ continuous: !!continuous, fromGesture: true });
     }
 
@@ -1340,7 +1319,6 @@
     function noteMicPermissionOnce() {
       if (state.micPermissionAsked) return;
       state.micPermissionAsked = true;
-      // On-screen only — never speak() before start() (breaks iOS user-gesture chain)
       showHeard('Allow microphone access when asked');
     }
 
