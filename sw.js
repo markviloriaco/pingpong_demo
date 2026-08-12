@@ -1,6 +1,6 @@
 /* App-shell service worker. Keep this conservative — aggressive cache-first
    interception is a known cause of endless loading spinners on iOS Safari. */
-const CACHE_NAME = 'pingpong-score-v4';
+const CACHE_NAME = 'pingpong-score-v5';
 const ASSETS = [
   './index.html',
   './manifest.json',

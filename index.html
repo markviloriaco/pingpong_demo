@@ -424,6 +424,29 @@
       50% { transform: scale(1.03); }
     }
 
+    /* ========== VOICE DEBUG OVERLAY ========== */
+    .vdebug {
+      display: none;
+      position: fixed;
+      top: calc(44px + var(--safe-t));
+      left: 8px;
+      z-index: 40;
+      max-width: 70vw;
+      max-height: 45vh;
+      overflow: hidden;
+      background: rgba(0,0,0,0.82);
+      color: #8f8;
+      font: 11px/1.45 ui-monospace, Menlo, monospace;
+      font-weight: 400;
+      padding: 8px 10px;
+      border-radius: 8px;
+      pointer-events: none;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .vdebug.show { display: block; }
+
     /* ========== MENU / OVERLAYS ========== */
     .overlay {
       display: none;
@@ -645,6 +668,7 @@
       </button>
     </div>
     <div class="heard" id="heardText" aria-live="polite"></div>
+    <div class="vdebug" id="vdebug" aria-hidden="true"></div>
     <div class="toolbar">
       <button type="button" id="undoBtn" aria-label="Undo last point">Undo</button>
       <button type="button" id="micBtn" aria-label="Hold to talk">Hold to talk</button>
@@ -659,6 +683,10 @@
       <label class="toggle-row" id="continuousMenuRow">
         <span>Continuous listening</span>
         <input type="checkbox" id="continuousListenMenu" />
+      </label>
+      <label class="toggle-row">
+        <span>Voice debug overlay</span>
+        <input type="checkbox" id="voiceDebugToggle" />
       </label>
       <button type="button" id="resumeBtn">Back to game</button>
       <button type="button" class="secondary" id="resetScoresBtn">Reset this game</button>
@@ -747,8 +775,21 @@
       lastVoiceScoreAt: 0,
       recognitionGeneration: 0,
       selfSpeechActive: false, // TTS currently playing while the mic stays on
-      selfSpeechUntil: 0       // ignore recognition results until this time
+      selfSpeechUntil: 0,      // ignore recognition results until this time
+      voiceDebug: false
     };
+
+    // ---------- Voice debug log (rolling; shown via Menu → Voice debug) ----------
+    const vlogLines = [];
+    function vlog(msg) {
+      const ts = new Date().toTimeString().slice(0, 8);
+      vlogLines.push(ts + ' ' + msg);
+      if (vlogLines.length > 16) vlogLines.shift();
+      if (state.voiceDebug) {
+        const el = document.getElementById('vdebug');
+        if (el) el.textContent = vlogLines.join('\n');
+      }
+    }
 
     // iOS Safari has fragile SpeechRecognition: requires sync user-gesture start,
     // conflicts with speechSynthesis, and cannot reliably auto-restart.
@@ -789,7 +830,9 @@
       winScore: $('winScore'),
       rematchBtn: $('rematchBtn'),
       newPlayersBtn: $('newPlayersBtn'),
-      confetti: $('confetti')
+      confetti: $('confetti'),
+      vdebug: $('vdebug'),
+      voiceDebugToggle: $('voiceDebugToggle')
     };
 
     // ---------- Speech synthesis ----------
@@ -838,10 +881,12 @@
       u.pitch = CONFIG.speechPitch;
       u.lang = CONFIG.speechLang;
       state.selfSpeechActive = true;
+      vlog('tts start: "' + text.slice(0, 40) + '"');
       const done = () => {
         if (!state.selfSpeechActive) return;
         state.selfSpeechActive = false;
         state.selfSpeechUntil = Date.now() + CONFIG.selfEchoTailMs;
+        vlog('tts end');
       };
       u.onend = done;
       u.onerror = done;
@@ -893,42 +938,11 @@
       } catch (_) { /* iOS 17+ only */ }
     }
 
-    /**
-     * Acquire and HOLD a mic stream for the whole session.
-     * Keeping the tracks live keeps the iOS audio session warm, which:
-     *  - stops iOS from tearing down SpeechRecognition seconds after start
-     *    (stopping the tracks was killing the recognizer — mic on → off bug),
-     *  - lets recognition auto-restart without a new user tap,
-     *  - lets speechSynthesis play while the recognizer keeps running.
-     */
-    async function acquirePersistentMic() {
-      const live = state.micStream &&
-        state.micStream.getTracks().some((t) => t.readyState === 'live');
-      if (live) {
-        state.micStreamOk = true;
-        return true;
-      }
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        state.micStreamOk = true;
-        return true;
-      }
-      setAudioSessionForMic();
-      try {
-        state.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        state.micStreamOk = true;
-        return true;
-      } catch (_) {
-        state.micStreamOk = false;
-        showHeard('Microphone permission blocked in Settings');
-        return false;
-      }
-    }
-
-    function hasLiveMicStream() {
-      return !!(state.micStream &&
-        state.micStream.getTracks().some((t) => t.readyState === 'live'));
-    }
-
+    // NOTE: do NOT call getUserMedia alongside SpeechRecognition on iOS.
+    // Holding a stream open makes the recognizer fail to get audio (mic light
+    // on but nothing heard), and stopping its tracks tears down the audio
+    // session and kills a running recognizer. SpeechRecognition prompts for
+    // and owns the microphone entirely by itself.
     function releaseMicStream() {
       if (state.micStream) {
         state.micStream.getTracks().forEach((t) => {
@@ -1194,6 +1208,7 @@
       }
       // Cap blind auto-restarts — iOS needs a tap after the session truly dies
       if (state.autoRestartAttempts >= 4) {
+        vlog('restart cap hit — pausing, tap needed');
         state.micPaused = true;
         setMicListeningUI(false);
         showHeard('Mic paused — tap to resume listening');
@@ -1203,6 +1218,7 @@
         state.restartTimer = null;
         if (!wantsContinuousListen() || state.listening) return;
         state.autoRestartAttempts += 1;
+        vlog('auto-restart attempt ' + state.autoRestartAttempts);
         startListening({ continuous: true, fromGesture: false });
       }, Math.max(300, delayMs || 400));
     }
@@ -1265,6 +1281,7 @@
 
       rec.onstart = () => {
         if (gen !== state.recognitionGeneration) return;
+        vlog('rec onstart (gen ' + gen + ')');
         state.listening = true;
         state.voiceArmed = true;
         state.autoRestartAttempts = 0;
@@ -1280,6 +1297,7 @@
         // otherwise "Point to Player 1" would score a phantom point.
         if (state.selfSpeechActive || Date.now() < state.selfSpeechUntil) {
           state.lastVoiceTranscript = '';
+          vlog('result ignored (self-speech)');
           return;
         }
         const results = event.results;
@@ -1299,6 +1317,7 @@
         if (display) {
           state.lastVoiceTranscript = display;
           showHeard(display);
+          vlog((finalText ? 'final: "' : 'interim: "') + display.slice(0, 40) + '"');
         }
 
         if (finalText) {
@@ -1318,6 +1337,7 @@
       rec.onerror = (event) => {
         if (gen !== state.recognitionGeneration) return;
         const err = event.error || 'error';
+        vlog('rec onerror: ' + err);
         state.listening = false;
 
         if (err === 'aborted') return;
@@ -1329,9 +1349,8 @@
         }
 
         if (err === 'not-allowed' || err === 'service-not-allowed') {
-          // With a live held mic stream the session is usually still warm —
-          // retry quietly before asking for a tap.
-          if (hasLiveMicStream() && wantsContinuousListen() && state.autoRestartAttempts < 4) {
+          // Retry quietly a couple of times before asking for a tap.
+          if (wantsContinuousListen() && state.autoRestartAttempts < 2) {
             setMicListeningUI(false);
             scheduleContinuousRestart(700);
             return;
@@ -1354,6 +1373,7 @@
 
       rec.onend = () => {
         if (gen !== state.recognitionGeneration) return;
+        vlog('rec onend (intentional=' + state.intentionalStop + ', tts=' + state.pausingForTts + ')');
         const pending = state.lastVoiceTranscript;
         state.lastVoiceTranscript = '';
         state.listening = false;
@@ -1478,9 +1498,11 @@
       } catch (_) {}
 
       try {
+        vlog('rec.start() (cont=' + !!continuous + ', gesture=' + !!fromGesture + ')');
         rec.start();
         // Wait for onstart to flip UI to Listening (and mic indicator)
       } catch (err) {
+        vlog('rec.start() threw: ' + (err && err.name));
         state.listening = false;
         if (fromGesture) {
           setMicListeningUI(false);
@@ -1501,15 +1523,9 @@
       setAudioSessionForMic();
       if (IS_IOS) state.voiceArmed = true;
 
-      // MUST be synchronous with the user tap — awaiting getUserMedia first breaks iOS start()
+      // MUST be synchronous with the user tap. No getUserMedia here: the
+      // recognizer must own the mic by itself (see releaseMicStream note).
       startListening({ continuous: !!continuous, fromGesture: true });
-
-      // Acquire and HOLD a mic stream in parallel. Its tracks must stay live
-      // for the whole session: stopping them tears down the iOS audio session
-      // and kills the recognizer seconds after start.
-      if (continuous || IS_IOS) {
-        acquirePersistentMic().catch(() => {});
-      }
     }
 
     function stopListening() {
@@ -1652,6 +1668,12 @@
           startListeningFromGesture({ continuous: true });
         }
       });
+      els.voiceDebugToggle.addEventListener('change', () => {
+        state.voiceDebug = els.voiceDebugToggle.checked;
+        els.vdebug.classList.toggle('show', state.voiceDebug);
+        if (state.voiceDebug) els.vdebug.textContent = vlogLines.join('\n') || '(no voice events yet)';
+      });
+
       els.resetScoresBtn.addEventListener('click', () => resetThisGame());
       els.endToSetupBtn.addEventListener('click', () => goToSetup({ resetGames: true }));
 
