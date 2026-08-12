@@ -602,8 +602,9 @@
           Microphone is used only when you press the mic button. HTTPS is required for voice on most phones.
         </p>
         <p class="mic-note hidden" id="iosVoiceHint">
-          On iPhone: enable continuous listening, tap Start Game, and allow access if asked.
-          Speech needs network. If it pauses, tap the mic (normal on iOS after score announcements).
+          On iPhone: turn on continuous listening and tap Start Game once (allow the mic).
+          You should see the orange mic dot at the top of the screen while it listens.
+          Score announcements are silent in continuous mode so the mic can stay on.
         </p>
         <p class="mic-note hidden" id="voiceUnsupported">
           Voice scoring is not supported in this browser. Tap scoring still works.
@@ -731,9 +732,12 @@
       lastVoiceTranscript: '',
       voiceHandled: false,
       restartTimer: null,
-      micPaused: false, // user paused continuous listening via mic button
-      micStreamOk: false, // getUserMedia succeeded at least once
-      lastStartFromGesture: false
+      micPaused: false, // user intentionally paused continuous listening
+      micStream: null,  // kept open on iOS so the status-bar mic indicator stays on
+      micStreamOk: false,
+      lastStartFromGesture: false,
+      lastVoiceScoreAt: 0,
+      recognitionGeneration: 0
     };
 
     // iOS Safari has fragile SpeechRecognition: requires sync user-gesture start,
@@ -779,11 +783,15 @@
     };
 
     // ---------- Speech synthesis ----------
-    // On iOS, speechSynthesis and SpeechRecognition fight over the audio session.
-    // Queue announcements while the mic is active, and wait briefly after TTS ends.
+    // On iOS, speechSynthesis steals the audio session from SpeechRecognition.
+    // In continuous mode we skip TTS so the mic can stay open after one tap.
     function flushSpeakQueue() {
       clearTimeout(state.speakTimer);
       if (state.listening || !state.speakQueue.length) return;
+      if (IS_IOS && state.continuousListen && !state.gameOver) {
+        state.speakQueue = [];
+        return;
+      }
       if (Date.now() < state.ttsBusyUntil) {
         state.speakTimer = setTimeout(flushSpeakQueue, Math.max(50, state.ttsBusyUntil - Date.now()));
         return;
@@ -813,6 +821,8 @@
 
     function speak(text) {
       if (!text) return;
+      // Continuous + iOS: never speak — it kills the mic session and forces another tap
+      if (IS_IOS && state.continuousListen && !state.gameOver) return;
       state.speakQueue.push(text);
       flushSpeakQueue();
     }
@@ -826,6 +836,50 @@
 
     function haptic() {
       if (navigator.vibrate) navigator.vibrate(CONFIG.vibrateMs);
+    }
+
+    function setAudioSessionForMic() {
+      try {
+        if (navigator.audioSession && navigator.audioSession.type !== undefined) {
+          navigator.audioSession.type = 'play-and-record';
+        }
+      } catch (_) { /* iOS 17+ only */ }
+    }
+
+    async function holdMicStream() {
+      if (state.micStream) {
+        const live = state.micStream.getTracks().some((t) => t.readyState === 'live');
+        if (live) return true;
+        releaseMicStream();
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return true;
+      setAudioSessionForMic();
+      try {
+        state.micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+        state.micStreamOk = true;
+        // Orange status-bar mic indicator should appear while these tracks are live
+        return true;
+      } catch (_) {
+        state.micStream = null;
+        state.micStreamOk = false;
+        showHeard('Microphone permission blocked in Settings');
+        return false;
+      }
+    }
+
+    function releaseMicStream() {
+      if (state.micStream) {
+        state.micStream.getTracks().forEach((t) => {
+          try { t.stop(); } catch (_) { /* ignore */ }
+        });
+        state.micStream = null;
+      }
     }
 
     // ---------- Serve / rules ----------
@@ -969,6 +1023,8 @@
         clearRestartTimer();
         state.micPaused = true;
         stopListening();
+        releaseMicStream();
+        destroyRecognition();
         releaseWakeLock();
         return;
       }
@@ -1048,11 +1104,10 @@
     });
 
     // ---------- Voice (Web Speech API) ----------
-    // Requires HTTPS on real devices for microphone / speech recognition.
-    // iOS Safari notes:
-    // - First recognition.start() should run in a user-gesture turn (Start Game / mic tap).
-    // - speechSynthesis and SpeechRecognition conflict; stop mic before TTS, restart after.
-    // - Continuous mode is best-effort via onend + post-TTS restart (OS may still pause it).
+    // Requires HTTPS. iOS continuous strategy:
+    // 1) One user tap → getUserMedia and KEEP the stream (status-bar mic light).
+    // 2) Skip speechSynthesis while continuous (TTS steals the session → another tap).
+    // 3) recognition.continuous = true; auto-restart onend without asking again.
     function speechSupported() {
       return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
     }
@@ -1084,34 +1139,26 @@
       state.restartTimer = setTimeout(() => {
         state.restartTimer = null;
         if (!wantsContinuousListen() || state.listening) return;
-        if (state.speakQueue.length || Date.now() < state.ttsBusyUntil) {
-          scheduleContinuousRestart(CONFIG.ttsCooldownMs);
-          return;
-        }
-        startListening({ continuous: true });
+        startListening({ continuous: true, fromGesture: false });
       }, Math.max(0, delayMs));
     }
 
     function setMicListeningUI(on) {
       els.micBtn.classList.toggle('listening', on);
-      if (IS_IOS) {
-        if (state.continuousListen) {
-          if (on) {
-            els.micBtn.textContent = 'Listening… tap to pause';
-            els.micBtn.setAttribute('aria-label', 'Pause continuous listening');
-          } else if (state.micPaused) {
-            els.micBtn.textContent = 'Mic paused — tap to resume';
-            els.micBtn.setAttribute('aria-label', 'Resume continuous listening');
-          } else {
-            els.micBtn.textContent = 'Tap to resume listening';
-            els.micBtn.setAttribute('aria-label', 'Resume continuous listening');
-          }
+      if (state.continuousListen) {
+        if (on) {
+          els.micBtn.textContent = IS_IOS ? 'Listening… tap to pause' : 'Listening…';
+          els.micBtn.setAttribute('aria-label', 'Pause continuous listening');
+        } else if (state.micPaused) {
+          els.micBtn.textContent = 'Mic paused — tap to resume';
+          els.micBtn.setAttribute('aria-label', 'Resume continuous listening');
         } else {
-          els.micBtn.textContent = on ? 'Listening… tap to stop' : 'Tap to talk';
-          els.micBtn.setAttribute('aria-label', on ? 'Stop listening' : 'Tap to talk');
+          els.micBtn.textContent = IS_IOS ? 'Starting mic…' : 'Hold to talk';
+          els.micBtn.setAttribute('aria-label', 'Microphone');
         }
-      } else if (state.continuousListen) {
-        els.micBtn.textContent = on ? 'Listening…' : 'Hold to talk';
+      } else if (IS_IOS) {
+        els.micBtn.textContent = on ? 'Listening… tap to stop' : 'Tap to talk';
+        els.micBtn.setAttribute('aria-label', on ? 'Stop listening' : 'Tap to talk');
       }
     }
 
@@ -1122,27 +1169,42 @@
       }
     }
 
-    function createRecognition() {
+    function destroyRecognition() {
+      if (!state.recognition) return;
+      const rec = state.recognition;
+      state.recognition = null;
+      try {
+        rec.onstart = null;
+        rec.onresult = null;
+        rec.onerror = null;
+        rec.onend = null;
+        rec.abort();
+      } catch (_) {
+        try { rec.stop(); } catch (__) { /* ignore */ }
+      }
+    }
+
+    function createRecognition(continuousMode) {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) return null;
       const rec = new SR();
+      const gen = ++state.recognitionGeneration;
       rec.lang = CONFIG.speechLang;
-      // interimResults helps Safari deliver something before a flaky isFinal flag
-      rec.interimResults = IS_IOS;
+      rec.interimResults = true;
       rec.maxAlternatives = 3;
-      // Keep false on all platforms; continuous mode is implemented by restarting onend.
-      rec.continuous = false;
+      rec.continuous = !!continuousMode;
 
       rec.onstart = () => {
+        if (gen !== state.recognitionGeneration) return;
         state.listening = true;
         state.lastVoiceTranscript = '';
         state.voiceHandled = false;
         setMicListeningUI(true);
-        if (!state.continuousListen) showHeard('Listening…');
-        else showHeard('Listening continuously…');
+        showHeard(continuousMode ? 'Mic on — listening…' : 'Listening…');
       };
 
       rec.onresult = (event) => {
+        if (gen !== state.recognitionGeneration) return;
         const results = event.results;
         let finalText = '';
         let interimText = '';
@@ -1156,66 +1218,75 @@
         interimText = interimText.trim();
 
         if (finalText) {
-          state.lastVoiceTranscript = finalText;
-          if (!state.voiceHandled) {
-            state.voiceHandled = true;
-            handleVoiceTranscript(finalText);
-          }
-          // Free the audio session for TTS (especially iOS), then restart after speak.
-          stopListening();
+          state.lastVoiceTranscript = '';
+          handleVoiceTranscript(finalText, { isFinal: true });
+          // Keep listening in continuous mode — stopping forces another tap on iOS
+          if (!continuousMode) stopListening();
           return;
         }
 
         if (interimText) {
           state.lastVoiceTranscript = interimText;
           showHeard(interimText);
+          if (IS_IOS && continuousMode) {
+            handleVoiceTranscript(interimText, { isFinal: false });
+          }
         }
       };
 
       rec.onerror = (event) => {
+        if (gen !== state.recognitionGeneration) return;
         const err = event.error || 'error';
-        const fromGesture = state.lastStartFromGesture;
         state.listening = false;
         clearListenTimer();
 
-        // iOS frequently returns not-allowed / service-not-allowed when start() is
-        // outside a tap, or when the audio session is busy after TTS/getUserMedia.
-        // Treat those as "paused — tap to resume", not a permanent settings failure.
+        if (err === 'aborted' || err === 'no-speech') {
+          setMicListeningUI(false);
+          if (wantsContinuousListen()) scheduleContinuousRestart(200);
+          return;
+        }
+
         if (err === 'not-allowed' || err === 'service-not-allowed') {
+          // Live mic stream = already armed; retry without demanding another tap
+          if (state.micStream && wantsContinuousListen()) {
+            showHeard('Reconnecting voice…');
+            setMicListeningUI(false);
+            destroyRecognition();
+            scheduleContinuousRestart(400);
+            return;
+          }
           state.micPaused = true;
           setMicListeningUI(false);
-          if (!fromGesture && state.continuousListen) {
-            showHeard('Listening paused — tap mic to resume');
-          } else {
-            showHeard('Listening needs a tap — tap mic to try again');
-          }
+          showHeard('Mic not active — tap mic once to enable');
           return;
         }
 
         if (err === 'network') {
-          showHeard('Voice needs a network connection (speech runs online on iPhone)');
-        } else if (err !== 'aborted' && err !== 'no-speech') {
+          showHeard('Voice needs network (iPhone speech is online)');
+        } else {
           showHeard('Voice error: ' + err);
         }
         setMicListeningUI(false);
-        if (err !== 'aborted') {
-          scheduleContinuousRestart(IS_IOS ? CONFIG.iosContinuousRestartMs : 300);
+        if (wantsContinuousListen()) {
+          destroyRecognition();
+          scheduleContinuousRestart(500);
         }
       };
 
       rec.onend = () => {
-        // iOS: commit the last interim transcript when the session ends
-        if (IS_IOS && !state.voiceHandled && state.lastVoiceTranscript) {
-          state.voiceHandled = true;
-          handleVoiceTranscript(state.lastVoiceTranscript);
+        if (gen !== state.recognitionGeneration) return;
+        const pending = state.lastVoiceTranscript;
+        state.lastVoiceTranscript = '';
+        if (IS_IOS && pending) {
+          handleVoiceTranscript(pending, { isFinal: true });
         }
         state.listening = false;
         clearListenTimer();
         setMicListeningUI(false);
-        flushSpeakQueue();
-        // Restart after TTS (flushSpeakQueue schedules it when done), or sooner if nothing to say
-        if (!state.speakQueue.length && Date.now() >= state.ttsBusyUntil) {
-          scheduleContinuousRestart(IS_IOS ? CONFIG.iosContinuousRestartMs : 300);
+        if (wantsContinuousListen()) {
+          scheduleContinuousRestart(IS_IOS ? 250 : 300);
+        } else {
+          flushSpeakQueue();
         }
       };
 
@@ -1226,11 +1297,14 @@
       return s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
     }
 
-    function handleVoiceTranscript(raw) {
-      showHeard(raw);
+    function handleVoiceTranscript(raw, { isFinal } = {}) {
       const t = normalize(raw);
+      if (!t) return;
 
       if (/\bundo\b/.test(t) || t.includes('take that back') || t.includes('take it back')) {
+        if (Date.now() - state.lastVoiceScoreAt < 1200) return;
+        state.lastVoiceScoreAt = Date.now();
+        showHeard(raw);
         undo();
         return;
       }
@@ -1247,40 +1321,44 @@
       }
 
       if (matches.length === 1) {
-        addPoint(matches[0]);
+        if (Date.now() - state.lastVoiceScoreAt < 1200) return;
+        state.lastVoiceScoreAt = Date.now();
+        showHeard(raw);
+        const silent = IS_IOS && state.continuousListen;
+        addPoint(matches[0], { silent });
+        if (silent && !state.gameOver) {
+          showHeard(`${state.names[matches[0]]} ${state.scores[0]}–${state.scores[1]}`);
+        }
         return;
       }
 
-      speak('Sorry, I did not catch that');
+      if (isFinal) {
+        showHeard(raw);
+        if (!(IS_IOS && state.continuousListen)) {
+          speak('Sorry, I did not catch that');
+        }
+      }
     }
 
-    /**
-     * getUserMedia and SpeechRecognition fight on iOS Safari — do not warm up the
-     * mic with getUserMedia before recognition.start(); it often yields service-not-allowed.
-     */
     function startListening({ continuous, fromGesture } = {}) {
       if (!speechSupported()) return;
-      if (!state.recognition) state.recognition = createRecognition();
-      if (!state.recognition) return;
       if (state.listening) return;
 
       state.lastStartFromGesture = !!fromGesture;
-      state.micPaused = false;
+      if (fromGesture) state.micPaused = false;
 
-      // Only cancel TTS if it is actually holding the audio session
-      const speaking = typeof speechSynthesis !== 'undefined' &&
-        (speechSynthesis.speaking || speechSynthesis.pending);
-      if (speaking || state.speakQueue.length) {
-        cancelSpeech();
-      }
+      cancelSpeech();
       clearRestartTimer();
+      setAudioSessionForMic();
+
+      destroyRecognition();
+      state.recognition = createRecognition(!!continuous);
+      if (!state.recognition) return;
 
       try {
         state.recognition.start();
         state.listening = true;
         setMicListeningUI(true);
-        if (!continuous) showHeard('Listening…');
-        else showHeard('Listening continuously…');
 
         clearListenTimer();
         if (!continuous) {
@@ -1290,26 +1368,46 @@
         }
       } catch (err) {
         state.listening = false;
-        state.micPaused = true;
         setMicListeningUI(false);
-        showHeard(continuous ? 'Tap mic to resume listening' : 'Could not start mic — tap again');
+        if (wantsContinuousListen()) scheduleContinuousRestart(300);
+        else showHeard('Could not start mic — tap again');
       }
     }
 
-    /** Must stay synchronous on iOS so recognition.start() keeps the user-gesture. */
-    function startListeningFromGesture({ continuous } = {}) {
+    /**
+     * One-tap arming: open (and keep) the mic stream, then start recognition.
+     * After this, continuous restarts should not need another tap.
+     */
+    async function startListeningFromGesture({ continuous } = {}) {
       noteMicPermissionOnce();
+      state.micPaused = false;
+      if (continuous) state.continuousListen = true;
+
+      if (IS_IOS && continuous) {
+        const ok = await holdMicStream();
+        if (!ok) {
+          state.micPaused = true;
+          setMicListeningUI(false);
+          return;
+        }
+        showHeard('Mic enabled — starting listener…');
+      }
+
       startListening({ continuous: !!continuous, fromGesture: true });
     }
 
     function stopListening() {
       clearListenTimer();
+      clearRestartTimer();
       if (!state.recognition) {
         state.listening = false;
         setMicListeningUI(false);
         return;
       }
       try {
+        if (IS_IOS) {
+          try { state.recognition.start(); } catch (_) { /* ignore */ }
+        }
         state.recognition.stop();
       } catch (_) { /* ignore */ }
       state.listening = false;
@@ -1369,6 +1467,8 @@
       state.micPaused = false;
       clearRestartTimer();
       stopListening();
+      releaseMicStream();
+      destroyRecognition();
       releaseWakeLock();
       hideWin();
       els.menu.classList.remove('active');
@@ -1451,6 +1551,8 @@
         } else {
           clearRestartTimer();
           stopListening();
+          releaseMicStream();
+          destroyRecognition();
           setMicListeningUI(false);
         }
       });
