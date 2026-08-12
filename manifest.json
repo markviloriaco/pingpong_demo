@@ -1,7 +1,7 @@
 {
   "name": "Ping Pong Score",
   "short_name": "Ping Pong",
-  "description": "Senior-friendly ping pong score tracker with tap and voice scoring",
+  "description": "Senior-friendly ping pong score tracker with tap scoring and spoken score announcements",
   "start_url": "./index.html",
   "display": "standalone",
   "orientation": "any",
