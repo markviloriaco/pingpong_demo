@@ -594,12 +594,15 @@
       </div>
 
       <div class="settings-block">
-        <label class="toggle-row">
+        <label class="toggle-row" id="continuousRow">
           <span>Continuous voice listening</span>
           <input type="checkbox" id="continuousListen" />
         </label>
         <p class="mic-note" id="micPermissionHint">
           Microphone is used only when you press the mic button. HTTPS is required for voice on most phones.
+        </p>
+        <p class="mic-note hidden" id="iosVoiceHint">
+          On iPhone: tap the mic once, say the point, then wait. Continuous listening is not available on iOS.
         </p>
         <p class="mic-note hidden" id="voiceUnsupported">
           Voice scoring is not supported in this browser. Tap scoring still works.
@@ -651,7 +654,7 @@
   <div class="overlay" id="menu" role="dialog" aria-modal="true" aria-labelledby="menuTitle">
     <div class="panel">
       <h2 id="menuTitle">Menu</h2>
-      <label class="toggle-row">
+      <label class="toggle-row" id="continuousMenuRow">
         <span>Continuous listening</span>
         <input type="checkbox" id="continuousListenMenu" />
       </label>
@@ -691,6 +694,10 @@
       speechPitch: 1,
       speechLang: 'en-US',
       vibrateMs: 40,
+      // iOS Safari needs a longer listen window (recognition is slow) and a pause
+      // after speechSynthesis before the mic can start again.
+      iosListenMs: 6000,
+      ttsCooldownMs: 400,
       colors: {
         0: { key: 'orange', label: 'Orange', css: '#E85D04' },
         1: { key: 'blue', label: 'Blue', css: '#0077B6' }
@@ -713,8 +720,19 @@
       recognition: null,
       listening: false,
       wakeLock: null,
-      heardTimer: null
+      heardTimer: null,
+      listenTimer: null,
+      speakQueue: [],
+      speakTimer: null,
+      ttsBusyUntil: 0,
+      lastVoiceTranscript: '',
+      voiceHandled: false
     };
+
+    // iOS Safari has fragile SpeechRecognition: requires sync user-gesture start,
+    // conflicts with speechSynthesis, and cannot reliably auto-restart.
+    const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
     // ---------- DOM ----------
     const $ = (id) => document.getElementById(id);
@@ -754,14 +772,45 @@
     };
 
     // ---------- Speech synthesis ----------
-    function speak(text) {
-      if (!('speechSynthesis' in window)) return;
+    // On iOS, speechSynthesis and SpeechRecognition fight over the audio session.
+    // Queue announcements while the mic is active, and wait briefly after TTS ends.
+    function flushSpeakQueue() {
+      clearTimeout(state.speakTimer);
+      if (state.listening || !state.speakQueue.length) return;
+      if (Date.now() < state.ttsBusyUntil) {
+        state.speakTimer = setTimeout(flushSpeakQueue, Math.max(50, state.ttsBusyUntil - Date.now()));
+        return;
+      }
+      const text = state.speakQueue.shift();
+      if (!('speechSynthesis' in window)) {
+        flushSpeakQueue();
+        return;
+      }
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.rate = CONFIG.speechRate;
       u.pitch = CONFIG.speechPitch;
       u.lang = CONFIG.speechLang;
+      const done = () => {
+        state.ttsBusyUntil = Date.now() + CONFIG.ttsCooldownMs;
+        state.speakTimer = setTimeout(flushSpeakQueue, CONFIG.ttsCooldownMs);
+      };
+      u.onend = done;
+      u.onerror = done;
       window.speechSynthesis.speak(u);
+    }
+
+    function speak(text) {
+      if (!text) return;
+      state.speakQueue.push(text);
+      flushSpeakQueue();
+    }
+
+    function cancelSpeech() {
+      clearTimeout(state.speakTimer);
+      state.speakQueue = [];
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      state.ttsBusyUntil = 0;
     }
 
     function haptic() {
@@ -978,14 +1027,36 @@
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && els.game.classList.contains('active') && !state.gameOver) {
         requestWakeLock();
-        if (state.continuousListen && speechSupported()) startListening({ continuous: true });
+        // Never auto-restart recognition on iOS (needs a fresh user gesture).
+        if (!IS_IOS && state.continuousListen && speechSupported()) {
+          startListening({ continuous: true });
+        }
       }
     });
 
     // ---------- Voice (Web Speech API) ----------
-    // Requires HTTPS on real devices for getUserMedia / speech recognition.
+    // Requires HTTPS on real devices for microphone / speech recognition.
+    // iOS Safari notes:
+    // - recognition.start() must run in the same turn as a user gesture (no await).
+    // - speechSynthesis and SpeechRecognition conflict; pause TTS while listening.
+    // - continuous auto-restart via setTimeout is unreliable; use tap-to-talk instead.
     function speechSupported() {
       return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    }
+
+    function setMicListeningUI(on) {
+      els.micBtn.classList.toggle('listening', on);
+      if (IS_IOS) {
+        els.micBtn.textContent = on ? 'Listening… tap to stop' : 'Tap to talk';
+        els.micBtn.setAttribute('aria-label', on ? 'Stop listening' : 'Tap to talk');
+      }
+    }
+
+    function clearListenTimer() {
+      if (state.listenTimer) {
+        clearTimeout(state.listenTimer);
+        state.listenTimer = null;
+      }
     }
 
     function createRecognition() {
@@ -993,41 +1064,84 @@
       if (!SR) return null;
       const rec = new SR();
       rec.lang = CONFIG.speechLang;
-      rec.interimResults = false;
+      // interimResults helps Safari deliver something before a flaky isFinal flag
+      rec.interimResults = IS_IOS;
       rec.maxAlternatives = 3;
-      rec.continuous = false; // mobile browsers often ignore continuous; we restart manually
+      rec.continuous = false;
+
+      rec.onstart = () => {
+        state.listening = true;
+        state.lastVoiceTranscript = '';
+        state.voiceHandled = false;
+        setMicListeningUI(true);
+        showHeard('Listening…');
+      };
 
       rec.onresult = (event) => {
         const results = event.results;
-        let transcript = '';
+        let finalText = '';
+        let interimText = '';
         for (let i = event.resultIndex; i < results.length; i++) {
-          if (results[i].isFinal || i === results.length - 1) {
-            transcript += results[i][0].transcript + ' ';
-          }
+          const piece = (results[i][0] && results[i][0].transcript) || '';
+          if (!piece) continue;
+          if (results[i].isFinal) finalText += piece + ' ';
+          else interimText = piece; // latest interim replaces earlier
         }
-        transcript = transcript.trim();
-        if (transcript) handleVoiceTranscript(transcript);
+        finalText = finalText.trim();
+        interimText = interimText.trim();
+
+        if (finalText) {
+          state.lastVoiceTranscript = finalText;
+          if (!state.voiceHandled) {
+            state.voiceHandled = true;
+            handleVoiceTranscript(finalText);
+          }
+          if (IS_IOS) stopListening();
+          return;
+        }
+
+        // Safari often never sets isFinal — keep the latest interim for onend
+        if (interimText) {
+          state.lastVoiceTranscript = interimText;
+          showHeard(interimText);
+        }
       };
 
       rec.onerror = (event) => {
-        // 'aborted' / 'no-speech' are common on release — ignore quietly
-        if (event.error === 'not-allowed') {
-          speak('Microphone permission is blocked. You can still tap to score.');
-          showHeard('Mic permission blocked');
+        const err = event.error || 'error';
+        if (err === 'not-allowed' || err === 'service-not-allowed') {
+          showHeard('Mic permission blocked — tap scoring still works');
+        } else if (err === 'network') {
+          showHeard('Voice needs a network connection');
+        } else if (err !== 'aborted' && err !== 'no-speech') {
+          showHeard('Voice error: ' + err);
         }
         state.listening = false;
-        els.micBtn.classList.remove('listening');
+        clearListenTimer();
+        setMicListeningUI(false);
       };
 
       rec.onend = () => {
+        // iOS: commit the last interim transcript when the session ends
+        if (IS_IOS && !state.voiceHandled && state.lastVoiceTranscript) {
+          state.voiceHandled = true;
+          handleVoiceTranscript(state.lastVoiceTranscript);
+        }
         state.listening = false;
-        els.micBtn.classList.remove('listening');
-        // Continuous mode: auto-restart (mobile may still pause in background)
-        if (state.continuousListen && els.game.classList.contains('active') && !state.gameOver && !els.menu.classList.contains('active')) {
+        clearListenTimer();
+        setMicListeningUI(false);
+        if (
+          !IS_IOS &&
+          state.continuousListen &&
+          els.game.classList.contains('active') &&
+          !state.gameOver &&
+          !els.menu.classList.contains('active')
+        ) {
           setTimeout(() => {
-            if (state.continuousListen) startListening({ continuous: true });
+            if (state.continuousListen && !IS_IOS) startListening({ continuous: true });
           }, 300);
         }
+        flushSpeakQueue();
       };
 
       return rec;
@@ -1041,19 +1155,16 @@
       showHeard(raw);
       const t = normalize(raw);
 
-      // Undo commands
       if (/\bundo\b/.test(t) || t.includes('take that back') || t.includes('take it back')) {
         undo();
         return;
       }
 
-      // Match player by name or color (forgiving substring match)
       const matches = [];
       for (let i = 0; i < 2; i++) {
         const name = normalize(state.names[i]);
         const color = CONFIG.colors[i].key;
         const nameHit = name && t.includes(name);
-        // also allow possessive-ish: "johns point" when name is john
         const nameRoot = name.replace(/s$/, '');
         const nameRootHit = nameRoot.length >= 2 && t.includes(nameRoot);
         const colorHit = t.includes(color);
@@ -1065,7 +1176,6 @@
         return;
       }
 
-      // Ambiguous or no match
       speak('Sorry, I did not catch that');
     }
 
@@ -1074,32 +1184,49 @@
       if (!state.recognition) state.recognition = createRecognition();
       if (!state.recognition) return;
       if (state.listening) return;
+
+      // Free the audio session before opening the mic (critical on iOS)
+      cancelSpeech();
+
       try {
         state.recognition.start();
         state.listening = true;
-        els.micBtn.classList.add('listening');
+        setMicListeningUI(true);
         if (!continuous) showHeard('Listening…');
-      } catch (_) {
-        /* start() can throw if already started */
+
+        // Auto-stop so iOS tap-to-talk cannot hang forever
+        clearListenTimer();
+        if (IS_IOS || !continuous) {
+          state.listenTimer = setTimeout(() => {
+            if (state.listening) stopListening();
+          }, IS_IOS ? CONFIG.iosListenMs : 8000);
+        }
+      } catch (err) {
+        state.listening = false;
+        setMicListeningUI(false);
+        showHeard('Could not start mic — tap again');
       }
     }
 
     function stopListening() {
-      if (!state.recognition) return;
+      clearListenTimer();
+      if (!state.recognition) {
+        state.listening = false;
+        setMicListeningUI(false);
+        return;
+      }
       try {
         state.recognition.stop();
       } catch (_) { /* ignore */ }
       state.listening = false;
-      els.micBtn.classList.remove('listening');
+      setMicListeningUI(false);
     }
 
-    async function ensureMicPermissionExplained() {
-      if (state.micPermissionAsked) return true;
+    function noteMicPermissionOnce() {
+      if (state.micPermissionAsked) return;
       state.micPermissionAsked = true;
-      // Friendly on-screen notice before first use
+      // On-screen only — never speak() before start() (breaks iOS user-gesture chain)
       showHeard('Allow microphone access when asked');
-      speak('Please allow microphone access when your phone asks.');
-      return true;
     }
 
     // ---------- Game flow ----------
@@ -1127,7 +1254,7 @@
       state.server = state.firstServer;
       state.history = [];
       state.gameOver = false;
-      state.continuousListen = els.continuousListen.checked;
+      state.continuousListen = IS_IOS ? false : els.continuousListen.checked;
       els.continuousListenMenu.checked = state.continuousListen;
 
       hideWin();
@@ -1136,7 +1263,7 @@
       showScreen('game');
       requestWakeLock();
 
-      if (state.continuousListen && speechSupported()) {
+      if (!IS_IOS && state.continuousListen && speechSupported()) {
         startListening({ continuous: true });
       }
     }
@@ -1205,7 +1332,9 @@
       });
       els.resumeBtn.addEventListener('click', () => {
         els.menu.classList.remove('active');
-        if (state.continuousListen && speechSupported()) startListening({ continuous: true });
+        if (!IS_IOS && state.continuousListen && speechSupported()) {
+          startListening({ continuous: true });
+        }
       });
       els.resetScoresBtn.addEventListener('click', () => resetThisGame());
       els.endToSetupBtn.addEventListener('click', () => goToSetup({ resetGames: true }));
@@ -1214,43 +1343,69 @@
         els.continuousListenMenu.checked = els.continuousListen.checked;
       });
       els.continuousListenMenu.addEventListener('change', () => {
+        if (IS_IOS) {
+          els.continuousListenMenu.checked = false;
+          return;
+        }
         state.continuousListen = els.continuousListenMenu.checked;
         els.continuousListen.checked = state.continuousListen;
         if (state.continuousListen) startListening({ continuous: true });
         else stopListening();
       });
 
-      // Hold-to-talk microphone
-      const micDown = async (e) => {
-        e.preventDefault();
-        if (!speechSupported() || state.gameOver) return;
-        await ensureMicPermissionExplained();
-        // Temporarily pause continuous restart confusion
-        startListening({ continuous: false });
-      };
-      const micUp = (e) => {
-        e.preventDefault();
-        if (!state.continuousListen) stopListening();
-      };
-
-      els.micBtn.addEventListener('pointerdown', micDown);
-      els.micBtn.addEventListener('pointerup', micUp);
-      els.micBtn.addEventListener('pointerleave', micUp);
-      els.micBtn.addEventListener('pointercancel', micUp);
+      // Mic: tap-to-talk on iOS (sync start in the click handler).
+      // Elsewhere: hold-to-talk with pointer events.
+      if (IS_IOS) {
+        els.micBtn.textContent = 'Tap to talk';
+        els.micBtn.setAttribute('aria-label', 'Tap to talk');
+        els.micBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          if (!speechSupported() || state.gameOver) return;
+          if (state.listening) {
+            stopListening();
+            return;
+          }
+          noteMicPermissionOnce();
+          startListening({ continuous: false });
+        });
+      } else {
+        const micDown = (e) => {
+          e.preventDefault();
+          if (!speechSupported() || state.gameOver) return;
+          noteMicPermissionOnce();
+          startListening({ continuous: false });
+        };
+        const micUp = (e) => {
+          e.preventDefault();
+          if (!state.continuousListen) stopListening();
+        };
+        els.micBtn.addEventListener('pointerdown', micDown);
+        els.micBtn.addEventListener('pointerup', micUp);
+        els.micBtn.addEventListener('pointerleave', micUp);
+        els.micBtn.addEventListener('pointercancel', micUp);
+      }
       els.micBtn.addEventListener('contextmenu', (e) => e.preventDefault());
 
       els.rematchBtn.addEventListener('click', () => {
-        // Rematch: swap first server as requested
         startGame({ rematch: true, swapServer: true });
       });
       els.newPlayersBtn.addEventListener('click', () => goToSetup({ resetGames: true }));
 
-      // Voice support detection
+      // Voice support / iOS UX
       if (!speechSupported()) {
         els.micBtn.classList.add('hidden');
         els.voiceUnsupported.classList.remove('hidden');
         els.micPermissionHint.classList.add('hidden');
-        els.continuousListen.closest('.toggle-row').style.display = 'none';
+        const cont = $('continuousRow');
+        if (cont) cont.style.display = 'none';
+      } else if (IS_IOS) {
+        const cont = $('continuousRow');
+        const contMenu = $('continuousMenuRow');
+        if (cont) cont.style.display = 'none';
+        if (contMenu) contMenu.style.display = 'none';
+        els.micPermissionHint.classList.add('hidden');
+        const iosHint = $('iosVoiceHint');
+        if (iosHint) iosHint.classList.remove('hidden');
       }
     }
 

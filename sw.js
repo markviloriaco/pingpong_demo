@@ -1,5 +1,5 @@
 /* Minimal service worker: cache app shell for offline use after first load. */
-const CACHE_NAME = 'pingpong-score-v1';
+const CACHE_NAME = 'pingpong-score-v2';
 const ASSETS = [
   './',
   './index.html',
